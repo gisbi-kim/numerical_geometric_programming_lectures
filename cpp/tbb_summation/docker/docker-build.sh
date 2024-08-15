@@ -1,0 +1,1 @@
+docker build -t my-ubuntu-dev:24.04 .
