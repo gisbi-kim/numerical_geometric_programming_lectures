@@ -1,2 +1,2 @@
 # numerical_programming_lectures
-tbb, gpu things for robotics
+- tbb, gpu things for robotics
