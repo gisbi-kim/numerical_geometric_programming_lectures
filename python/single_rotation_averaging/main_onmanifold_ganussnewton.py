@@ -97,39 +97,7 @@ for i in range(max_iters):
         J_i = -1*np.eye(3)  # approx. to -I
         """
         Derivation (why -I)
-
-        let 
-            R0_adjusted = R0 @ Exp(theta) 
-
-        then, 
-            error = unskew(log_map(dR)),
-            where dR = R_measured - R_modeled 
-                     = R1 - R0_adjusted # same for R2, R3, ...
-                     = R0_adjusted.T @ R1 
-                     = (R0@Exp(theta)).T @ R1
-                     = (R0@(I + skew(theta))).T @ R1
-                    
-        we can summarize log_map as 
-            = k * (dR - dR.T) # k is some constant (not a symbol)
-            = k * ( (R0@(I + skew(theta))).T @ R1) - ((R0@(I + skew(theta))).T @ R1).T )
-            = k * ( (R0@(I + skew(theta))).T @ R1 - R1.T@(R0@(I + skew(theta))) )
-            = k * ( ((I + skew(theta)).T@R0.T@R1) - R1.T@R0@(1 + skew(theta)) )
-            we use (I + skew(theta)).T = (I - skew(theta))
-            then
-            = k * ( ((I - skew(theta))@R0.T@R1) - R1.T@R0@(1 + skew(theta)) )
-            = k * ( -1*(R0.T@R1 + R1.T@R0)@skew(theta) + c ) # c is some constant 
-            we can assume c ~ 0, and R0.T@R1 = dR ~ I, 
-            also, angleaxis = np.arccos((np.trace(dR) - 1) / 2) ~ 0, 
-            and k = (angleaxis / (2 * np.sin(angleaxis))) ~ 1/2 
-            thus, 
-            = 1/2 * (-1*(1 + 1)@skew(theta) + 0) 
-            = -skew(theta)
-
-        so unskew it, 
-            = -1 * theta 
-            
-        get derivate of (-1*theta) w.r.t theta is 
-            = -I
+            see https://gsk1m.github.io/slam/2024/08/24/rot-avg1.html
         """
 
         H += J_i.T @ J_i 
