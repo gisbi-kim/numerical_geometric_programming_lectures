@@ -4,9 +4,10 @@ study mateiral recommendation:
     http://www.diag.uniroma1.it/~labrococo/tutorial_icra_2016/icra16_slam_tutorial_grisetti.pdf
 """
 
-import os 
-import sys 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import os
+import sys
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from lib.pose import *
 
 import matplotlib.pyplot as plt
