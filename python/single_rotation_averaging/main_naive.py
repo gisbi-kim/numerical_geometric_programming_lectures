@@ -1,4 +1,7 @@
-import numpy as np
+import os 
+import sys 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from lib.pose import *
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -45,24 +48,6 @@ R3 = create_rotation_matrix(roll3, pitch3, yaw3, "R3")
 # 초기 회전 행렬 R0 
 R0 = np.eye(3)
 # R0 = R1.T
-
-# 회전 행렬의 로그맵 (rotation matrix to tangent space)
-def log_map(R):
-    theta = np.arccos((np.trace(R) - 1) / 2)
-    if np.sin(theta) == 0:
-        return np.zeros((3, 3))
-    return theta / (2 * np.sin(theta)) * (R - R.T)
-
-# 회전 행렬의 지수맵 (tangent space to rotation matrix)
-def exp_map(omega):
-    theta = np.linalg.norm(omega)
-    if theta < 1e-10:
-        return np.eye(3)
-    omega_hat = omega / theta
-    omega_cross = np.array([[0, -omega_hat[2], omega_hat[1]],
-                            [omega_hat[2], 0, -omega_hat[0]],
-                            [-omega_hat[1], omega_hat[0], 0]])
-    return np.eye(3) + np.sin(theta) * omega_cross + (1 - np.cos(theta)) * np.dot(omega_cross, omega_cross)
 
 print(" ")
 

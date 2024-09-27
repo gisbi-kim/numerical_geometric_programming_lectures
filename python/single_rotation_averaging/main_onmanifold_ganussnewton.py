@@ -4,7 +4,10 @@ study mateiral recommendation:
     http://www.diag.uniroma1.it/~labrococo/tutorial_icra_2016/icra16_slam_tutorial_grisetti.pdf
 """
 
-import numpy as np
+import os 
+import sys 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from lib.pose import *
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -53,34 +56,6 @@ R3 = create_rotation_matrix(roll3, pitch3, yaw3, "R3")
 # Initial solution
 R0 = np.eye(3)
 # R0 = R1.copy()
-
-# rotation matrix to tangent space
-def log_map(dR):
-    # see https://en.wikipedia.org/wiki/Axis%E2%80%93angle_representation#Log_map_from_SO(3)_to_%F0%9D%94%B0%F0%9D%94%AC(3)
-    angleaxis = np.arccos((np.trace(dR) - 1) / 2)
-    if np.sin(angleaxis) == 0:
-        return np.zeros((3, 3))
-
-    k = (angleaxis / (2 * np.sin(angleaxis)))
-    return k * (dR - dR.T)
-
-def unskew(skew_mat):
-    assert skew_mat.shape == (3, 3), "Input must be a 3x3 matrix"
-    x = skew_mat[2, 1]
-    y = skew_mat[0, 2]
-    z = skew_mat[1, 0]
-    return np.array([x, y, z])
-
-# tangent space to rotation matrix
-def exp_map(omega):
-    theta = np.linalg.norm(omega)
-    if theta < 1e-10:
-        return np.eye(3)
-    omega_hat = omega / theta
-    omega_cross = np.array([[0, -omega_hat[2], omega_hat[1]],
-                            [omega_hat[2], 0, -omega_hat[0]],
-                            [-omega_hat[1], omega_hat[0], 0]])
-    return np.eye(3) + np.sin(theta) * omega_cross + (1 - np.cos(theta)) * np.dot(omega_cross, omega_cross)
 
 print(" ")
 
