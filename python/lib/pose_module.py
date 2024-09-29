@@ -110,33 +110,56 @@ def skew(omega):
 
 def oplus(T, tangent_vec):
     """
-    Update SE(3) matrix T using 6D vector dxi.
-    dxi[:3] represents the rotational part (in SO(3)).
-    dxi[3:] represents the translational part (in R^3).
+    Update SE(3) or SO(3) matrix T using a tangent vector.
+    - If tangent_vec has 6 elements, it represents SE(3) (3 for rotation, 3 for translation).
+    - If tangent_vec has 3 elements, it represents SO(3) (rotation only).
 
     Parameters:
-    - T: (4x4) SE(3) matrix to be updated.
-    - dxi: (6,) 6D vector where the first 3 elements are for rotation (SO(3))
-           and the last 3 elements are for translation (R^3).
+    - T: (4x4) SE(3) matrix or (3x3) SO(3) matrix to be updated.
+    - tangent_vec: (6,) 6D vector for SE(3) or (3,) 3D vector for SO(3).
 
     Returns:
-    - T_updated: Updated SE(3) matrix.
+    - T_updated: Updated SE(3) or SO(3) matrix.
     """
-    # Extract the rotational and translational updates
-    dtheta_rot = tangent_vec[:3]  # rotational part
-    dtheta_trans = tangent_vec[3:]  # translational part
+    if tangent_vec.shape == (6,):
+        # SE(3) Update
+        # Extract the rotational and translational updates
+        dtheta_rot = tangent_vec[:3]  # rotational part
+        dtheta_trans = tangent_vec[3:]  # translational part
 
-    # Update the rotation (SO(3) part) using exponential map
-    T[:3, :3] = T[:3, :3] @ exp_map(dtheta_rot)
+        # Update the rotation (SO(3) part) using exponential map
+        T[:3, :3] = T[:3, :3] @ exp_map(dtheta_rot)
 
-    # Normalize the rotation part to ensure it's a valid SO(3) matrix
-    U, _, Vt = np.linalg.svd(T[:3, :3])
-    T[:3, :3] = U @ Vt
-    if np.linalg.det(T[:3, :3]) < 0:
-        U[:, -1] *= -1
+        # Normalize the rotation part to ensure it's a valid SO(3) matrix
+        U, _, Vt = np.linalg.svd(T[:3, :3])
         T[:3, :3] = U @ Vt
+        if np.linalg.det(T[:3, :3]) < 0:
+            U[:, -1] *= -1
+            T[:3, :3] = U @ Vt
 
-    # Update the translation (R^3 part)
-    T[:3, 3] += dtheta_trans
+        # Update the translation (R^3 part)
+        T[:3, 3] += dtheta_trans
+
+    elif tangent_vec.shape == (3,):
+        # SO(3) Update
+        # Ensure T is a 3x3 rotation matrix
+        if T.shape != (3, 3):
+            raise ValueError("For SO(3) update, T must be a 3x3 rotation matrix.")
+
+        # Extract the rotational update
+        dtheta_rot = tangent_vec  # rotational part
+
+        # Update the rotation using exponential map
+        T = exp_map(dtheta_rot) @ T
+
+        # Normalize the rotation part to ensure it's a valid SO(3) matrix
+        U, _, Vt = np.linalg.svd(T)
+        T = U @ Vt
+        if np.linalg.det(T) < 0:
+            U[:, -1] *= -1
+            T = U @ Vt
+
+    else:
+        raise ValueError("tangent_vec must be either a 3-dimensional or 6-dimensional vector.")
 
     return T

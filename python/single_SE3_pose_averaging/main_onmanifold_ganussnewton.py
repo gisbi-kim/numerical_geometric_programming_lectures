@@ -8,7 +8,7 @@ import os
 import sys
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from lib.pose import *
+from python.lib.pose_module import *
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
