@@ -132,7 +132,7 @@ class PoseGraph:
             BetweenFactor(from_node_id, to_node_id, relative_pose)
         )
 
-    def solve_graph(self, max_iterations=3000, tolerance=1e-6):
+    def solve_graph(self, max_iterations=3000, tolerance=1e-3):
         """
         포즈 그래프를 최적화합니다.
 
@@ -198,7 +198,7 @@ class PoseGraph:
                 J_i = -np.eye(6)
                 J_j = np.eye(6)
 
-                # Weighting: Between Residual의 가중치 0.5
+                # Weighting: Between Residual의 가중치
                 residual_weighted = residual * np.sqrt(self.weight_between)
                 J_i_weighted = J_i * np.sqrt(self.weight_between)
                 J_j_weighted = J_j * np.sqrt(self.weight_between)
@@ -222,7 +222,7 @@ class PoseGraph:
                 if mode == "GN":
                     dx = np.linalg.solve(H, -b)
                 elif mode == "LM":
-                    damping= 1e-3
+                    damping= 1e-1
                     H_damped = H + (damping * np.eye(H.shape[0]))
                     dx = np.linalg.solve(H_damped, -b)
             except np.linalg.LinAlgError:
