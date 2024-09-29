@@ -88,12 +88,12 @@ class PoseGraph:
         self.set_weights()
 
     def set_weights(self):
-        self.rot_trans_scale_ratio = 0.1
+        self.rot_trans_scale_ratio = 1
 
         self.weight_rot_prior = 100000000.0    # Prior에서 회전에 대한 가중치
         self.weight_trans_prior = 100000000.0  # Prior에서 위치에 대한 가중치
  
-        self.weight_rot_between = 1.0   # Between에서 회전에 대한 가중치
+        self.weight_rot_between = 0.01   # Between에서 회전에 대한 가중치
         self.weight_trans_between = 1.0 # Between에서 위치에 대한 가중치
 
     def generate_node_at_graph(self, node_id, initial_pose=None):
@@ -149,6 +149,7 @@ class PoseGraph:
         node_id_to_idx = {node_id: idx for idx, node_id in enumerate(node_ids)}
         num_nodes = len(node_ids)
 
+        iteration_msg_list = [] 
         for iteration in range(max_iterations):
             # H.fill(0.0)
             # b.fill(0.0)
@@ -166,10 +167,10 @@ class PoseGraph:
                 # Residual 계산: log_map(inv(T_prior) * T_est)
                 T_residual = np.linalg.inv(T_prior) @ T_est
                 R_residual = T_residual[:3, :3]
-                dtheta = Log_map(R_residual)
-                dt = self.rot_trans_scale_ratio * T_residual[:3, 3]
+                drotvec = Log_map(R_residual)
+                dpos = self.rot_trans_scale_ratio * T_residual[:3, 3]
 
-                residual = np.hstack((dtheta, dt))
+                residual = np.hstack((drotvec, dpos))
 
                 total_residual += np.linalg.norm(residual)  # (for debug) residual의 노름을 total_residual에 더함
 
@@ -194,7 +195,7 @@ class PoseGraph:
 
 
             # Between Residuals
-            if 50 < iteration:
+            if 5 < iteration:
                 break 
             
             for between in self.between_factors:
@@ -213,8 +214,8 @@ class PoseGraph:
                 dpos = self.rot_trans_scale_ratio * T_residual[:3, 3]
 
                 print(f"\n\n{iteration}: Relative Factor on node {between.from_node_id} and {between.to_node_id}")
-                print(f"T_AB (meas) \n{T_AB}")
-                print(f"T_AB (estm) \n{T_est}")
+                print(f"T_ij (meas) \n{T_AB}")
+                print(f"T_ij (estm) \n{T_est}")
                 print(f"d rot: {drotvec}")
                 print(f"d pos: {dpos}")
 
@@ -254,7 +255,7 @@ class PoseGraph:
                 if mode == "GN":
                     dx = np.linalg.solve(H, -b)
                 elif mode == "LM":
-                    damping= 1e-1
+                    damping= 1e-4
                     H_damped = H + (damping * np.eye(H.shape[0]))
                     dx = np.linalg.solve(H_damped, -b)
             except np.linalg.LinAlgError:
@@ -263,7 +264,9 @@ class PoseGraph:
 
             # Check convergence
             norm_dx = np.linalg.norm(dx)
-            print(f"Iteration {iteration}: |dx| = {norm_dx:.6f}, total_residual = {total_residual:.6f}")
+            iteration_msg = f"Iteration {iteration}: |dx| = {norm_dx:.6f}, total_residual = {total_residual:.6f}"
+            iteration_msg_list.append(iteration_msg)
+            print(iteration_msg)
 
             if norm_dx < tolerance:
                 print(f"Converged at iteration {iteration}")
@@ -277,6 +280,10 @@ class PoseGraph:
 
             if iteration == max_iterations - 1:
                 print("Reached maximum iterations without convergence.")
+
+        print("done.\n")
+        for msg in iteration_msg_list:
+            print(msg)
 
     def get_solution(self, node_id):
         """
@@ -335,7 +342,7 @@ def main():
     # PoseGraph 객체 생성
     graph = PoseGraph()
 
-    delta_yaw = np.deg2rad(60)  # 90도 회전을 라디안으로 변환
+    delta_yaw = np.deg2rad(10)  # 90도 회전을 라디안으로 변환
 
     # 1. 노드 A, B, C, D, E 추가 (네모를 형성하는 5개 노드)
     initial_pose_A = create_pose_matrix(0, 0, 0, np.array([0, 0, 0]))
@@ -369,10 +376,10 @@ def main():
         initial_pose = graph.get_solution(node_id).copy()
 
         # 회전 노이즈 추가 (0.1 rad)
-        # noise_rot = 0.15 * np.random.randn(3)
-        # noise_trans = 0.2 * np.random.randn(3)
-        noise_rot = 0.01 * np.random.randn(3)
-        noise_trans = 0.01 * np.random.randn(3)
+        # noise_rot = 0.01 * np.random.randn(3)
+        # noise_trans = 0.01 * np.random.randn(3)
+        noise_rot = 0.05 * np.random.randn(3)
+        noise_trans = 0.2 * np.random.randn(3)
         
         initial_rotation = R.from_matrix(initial_pose[:3, :3])
         noisy_rotation = initial_rotation * R.from_rotvec(noise_rot)
