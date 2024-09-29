@@ -1,536 +1,286 @@
-import os
-import sys
-import numpy as np  # Ensure numpy is imported
-
-# from scipy.linalg import logm, expm  # For Log_map and oplus functions
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import numpy as np
 from scipy.spatial.transform import Rotation as R
-from lib.pose_module import *
-
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
+import copy 
 
-
-def create_rotation_matrix(roll, pitch, yaw):
+def plot_poses(pose_list, ax, color='b', label_prefix='Pose'):
     """
-    롤, 피치, 요 각을 사용하여 회전 행렬을 생성합니다.
+    Visualize a list of Pose objects in a 3D plot.
     """
-    # R.from_euler()를 사용하여 회전 행렬 생성
-    rotation = R.from_euler('xyz', [roll, pitch, yaw])
-    return rotation.as_matrix()  # 회전 행렬로 변환하여 반환
-
-
-def create_pose_matrix(roll, pitch, yaw, position):
-    """
-    롤, 피치, 요 각과 위치 벡터를 사용하여 SE(3) 행렬을 생성합니다.
-    """
-    R = create_rotation_matrix(roll, pitch, yaw)
-    T = np.eye(4)
-    T[:3, :3] = R
-    T[:3, 3] = position
-    return T
-
-
-class Node:
-    """
-    포즈 그래프의 노드를 나타내는 클래스입니다.
-    각 노드는 고유한 문자열 ID와 SE(3) 포즈를 가집니다.
-    """
-
-    def __init__(self, node_id, initial_pose=None):
-        self.node_id = node_id
-        if initial_pose is None:
-            self.pose = np.eye(4)  # 기본 포즈는 항등 행렬
-        else:
-            self.pose = initial_pose.copy()
-
-
-class Factor:
-    """
-    포즈 그래프의 팩터를 나타내는 기본 클래스입니다.
-    """
-
-    pass
-
-
-class PriorFactor(Factor):
-    """
-    노드에 대한 Prior 제약을 나타내는 클래스입니다.
-    """
-
-    def __init__(self, node_id, prior_pose):
-        self.node_id = node_id
-        self.prior_pose = prior_pose.copy()
-
-
-class BetweenFactor(Factor):
-    """
-    두 노드 간의 Between Residual을 나타내는 클래스입니다.
-    """
-
-    def __init__(self, from_node_id, to_node_id, relative_pose):
-        self.from_node_id = from_node_id
-        self.to_node_id = to_node_id
-        self.relative_pose = relative_pose.copy()
-
-
-class PoseGraph:
-    """
-    포즈 그래프 최적화를 수행하는 클래스입니다.
-    """
-
-    def __init__(self):
-        self.nodes = {}  # node_id: Node
-        self.prior_factors = []  # List of PriorFactor
-        self.between_factors = []  # List of BetweenFactor
-
-        self.set_weights()
-
-    def set_weights(self):
-        self.rot_trans_scale_ratio = 1
-
-        self.weight_rot_prior = 100000000.0    # Prior에서 회전에 대한 가중치
-        self.weight_trans_prior = 100000000.0  # Prior에서 위치에 대한 가중치
- 
-        self.weight_rot_between = 1.0   # Between에서 회전에 대한 가중치
-        self.weight_trans_between = 1.0 # Between에서 위치에 대한 가중치
-
-    def generate_node_at_graph(self, node_id, initial_pose=None):
-        """
-        그래프에 노드를 추가합니다.
-
-        Parameters:
-        - node_id: 노드의 고유 문자열 ID
-        - initial_pose: 초기 SE(3) 포즈 (옵션)
-        """
-        if node_id in self.nodes:
-            raise ValueError(f"Node '{node_id}' already exists.")
-        self.nodes[node_id] = Node(node_id, initial_pose)
-
-    def add_prior_factor(self, node_id, prior_pose):
-        """
-        노드에 대한 Prior Factor를 추가합니다.
-
-        Parameters:
-        - node_id: 노드의 문자열 ID
-        - prior_pose: Prior로 설정할 SE(3) 포즈
-        """
-        if node_id not in self.nodes:
-            raise ValueError(f"Node '{node_id}' does not exist.")
-        self.prior_factors.append(PriorFactor(node_id, prior_pose))
-
-    def add_between_factor(self, from_node_id, to_node_id, relative_pose):
-        """
-        두 노드 간의 Between Factor를 추가합니다.
-
-        Parameters:
-        - from_node_id: 시작 노드의 문자열 ID
-        - to_node_id: 도착 노드의 문자열 ID
-        - relative_pose: from_node_id에서 to_node_id로의 상대 SE(3) 포즈
-        """
-        if from_node_id not in self.nodes or to_node_id not in self.nodes:
-            raise ValueError(
-                f"Both nodes '{from_node_id}' and '{to_node_id}' must exist."
-            )
-        self.between_factors.append(
-            BetweenFactor(from_node_id, to_node_id, relative_pose)
-        )
-
-    def solve_graph(self, max_iterations=300, tolerance=1e-3):
-        """
-        포즈 그래프를 최적화합니다.
-
-        Parameters:
-        - max_iterations: 최적화의 최대 반복 횟수
-        - tolerance: 수렴을 판단할 허용 오차
-        """
-        node_ids = list(self.nodes.keys())
-        node_id_to_idx = {node_id: idx for idx, node_id in enumerate(node_ids)}
-        num_nodes = len(node_ids)
-
-        iteration_msg_list = [] 
-        for iteration in range(max_iterations):
-            total_residual = 0.0  # total residual 초기화
-
-            # --- 1. 회전 업데이트 단계 ---
-            # 회전에 관련된 Hessian과 b 벡터 초기화
-            H_rot = np.zeros((3 * num_nodes, 3 * num_nodes))
-            b_rot = np.zeros(3 * num_nodes)
-
-            # Prior Residuals for Rotation
-            for prior in self.prior_factors:
-                i = node_id_to_idx[prior.node_id]
-                T_est = self.nodes[prior.node_id].pose
-                T_prior = prior.prior_pose
-
-                # Residual 계산: log_map(inv(T_prior) * T_est)
-                T_residual = np.linalg.inv(T_prior) @ T_est
-                R_residual = T_residual[:3, :3]
-                drotvec = Log_map(R_residual)
-
-                # Accumulate total residual
-                total_residual += np.linalg.norm(drotvec)
-
-                # Jacobian은 단위 행렬 (Prior Residual은 노드 자체에만 영향)
-                J_rot = np.eye(3)
-
-                # 회전에 대한 가중치 적용
-                W_rot_prior = np.sqrt(self.weight_rot_prior) * np.eye(3)
-
-                residual_rot_weighted = W_rot_prior @ drotvec
-                J_rot_weighted = W_rot_prior @ J_rot
-
-                # Hessian 및 b 업데이트
-                H_rot_i = J_rot_weighted.T @ J_rot_weighted
-                b_rot_i = J_rot_weighted.T @ residual_rot_weighted
-
-                H_rot[3 * i : 3 * (i + 1), 3 * i : 3 * (i + 1)] += H_rot_i
-                b_rot[3 * i : 3 * (i + 1)] += b_rot_i
-
-            # Between Residuals for Rotation
-            for between in self.between_factors:
-                i = node_id_to_idx[between.from_node_id]
-                j = node_id_to_idx[between.to_node_id]
-                T_i = self.nodes[between.from_node_id].pose
-                T_j = self.nodes[between.to_node_id].pose
-                T_AB = between.relative_pose
-
-                # Residual 계산: log_map(inv(T_i) * T_j * inv(T_AB))
-                T_est = np.linalg.inv(T_i) @ T_j
-                T_residual = T_est @ np.linalg.inv(T_AB)
-                R_residual = T_residual[:3, :3]
-                drotvec = Log_map(R_residual)
-
-                # Optional: 안전한 업데이트 적용
-                use_safe_update = True 
-                if use_safe_update:
-                    while 1e-2 < np.max(np.abs(drotvec)):
-                        drotvec = drotvec * 0.5  # 더 작은 스텝으로 조정
-
-                residual_rot = drotvec
-                total_residual += np.linalg.norm(residual_rot)
-
-                # Jacobian 설정: 노드 i는 -I, 노드 j는 +I
-                J_i_rot = -np.eye(3)
-                J_j_rot = np.eye(3)
-
-                # 회전에 대한 가중치 적용
-                W_rot_between = np.sqrt(self.weight_rot_between) * np.eye(3)
-
-                residual_rot_weighted = W_rot_between @ residual_rot
-                J_i_rot_weighted = W_rot_between @ J_i_rot
-                J_j_rot_weighted = W_rot_between @ J_j_rot
-
-                # Hessian 및 b 업데이트
-                H_rot_ii = J_i_rot_weighted.T @ J_i_rot_weighted
-                H_rot_jj = J_j_rot_weighted.T @ J_j_rot_weighted
-                H_rot_ij = J_i_rot_weighted.T @ J_j_rot_weighted
-
-                H_rot[3 * i : 3 * (i + 1), 3 * i : 3 * (i + 1)] += H_rot_ii
-                H_rot[3 * j : 3 * (j + 1), 3 * j : 3 * (j + 1)] += H_rot_jj
-                H_rot[3 * i : 3 * (i + 1), 3 * j : 3 * (j + 1)] += H_rot_ij
-                H_rot[3 * j : 3 * (j + 1), 3 * i : 3 * (i + 1)] += H_rot_ij.T
-
-                b_rot[3 * i : 3 * (i + 1)] += J_i_rot_weighted.T @ residual_rot_weighted
-                b_rot[3 * j : 3 * (j + 1)] += J_j_rot_weighted.T @ residual_rot_weighted
-
-            # 회전 업데이트 해를 계산 (H_rot * drot = -b_rot)
-            try:
-                damping_rot = 0.000
-                H_rot_damped = H_rot + damping_rot * np.eye(H_rot.shape[0])
-                drot = np.linalg.solve(H_rot_damped, -b_rot)
-            except np.linalg.LinAlgError:
-                print("Singular rotation matrix encountered during optimization.")
-                break
-
-            # 회전 업데이트 적용
-            for node_id in node_ids:
-                idx = node_id_to_idx[node_id]
-                delta_rot = drot[3 * idx : 3 * (idx + 1)]
-                if np.linalg.norm(delta_rot) > 1e-6:
-                    rotation_update = R.from_rotvec(delta_rot).as_matrix()
-                    self.nodes[node_id].pose[:3, :3] = rotation_update @ self.nodes[node_id].pose[:3, :3]
-
-            # --- 2. 위치 업데이트 단계 ---
-            # 위치에 관련된 Hessian과 b 벡터 초기화
-            H_trans = np.zeros((3 * num_nodes, 3 * num_nodes))
-            b_trans = np.zeros(3 * num_nodes)
-
-            # Prior Residuals for Translation
-            for prior in self.prior_factors:
-                i = node_id_to_idx[prior.node_id]
-                T_est = self.nodes[prior.node_id].pose
-                T_prior = prior.prior_pose
-
-                # Residual 계산: inv(T_prior) * T_est의 translation 부분
-                T_residual = np.linalg.inv(T_prior) @ T_est
-                dpos = self.rot_trans_scale_ratio * T_residual[:3, 3]
-
-                # Accumulate total residual
-                total_residual += np.linalg.norm(dpos)
-
-                # Jacobian은 단위 행렬 (Prior Residual은 노드 자체에만 영향)
-                J_trans = np.eye(3)
-
-                # 위치에 대한 가중치 적용
-                W_trans_prior = np.sqrt(self.weight_trans_prior) * np.eye(3)
-
-                residual_trans_weighted = W_trans_prior @ dpos
-                J_trans_weighted = W_trans_prior @ J_trans
-
-                # Hessian 및 b 업데이트
-                H_trans_i = J_trans_weighted.T @ J_trans_weighted
-                b_trans_i = J_trans_weighted.T @ residual_trans_weighted
-
-                H_trans[3 * i : 3 * (i + 1), 3 * i : 3 * (i + 1)] += H_trans_i
-                b_trans[3 * i : 3 * (i + 1)] += b_trans_i
-
-            # Between Residuals for Translation
-            for between in self.between_factors:
-                i = node_id_to_idx[between.from_node_id]
-                j = node_id_to_idx[between.to_node_id]
-                T_i = self.nodes[between.from_node_id].pose
-                T_j = self.nodes[between.to_node_id].pose
-                T_AB = between.relative_pose
-
-                # Residual 계산: inv(T_i) * T_j * inv(T_AB)의 translation 부분
-                T_est = np.linalg.inv(T_i) @ T_j
-                T_residual = T_est @ np.linalg.inv(T_AB)
-                dpos = self.rot_trans_scale_ratio * T_residual[:3, 3]
-
-                # Optional: 안전한 업데이트 적용
-                use_safe_update = True 
-                if use_safe_update:
-                    while 1e-1 < np.max(np.abs(dpos)):
-                        dpos = dpos * 0.5  # 더 작은 스텝으로 조정
-
-                residual_trans = dpos
-                total_residual += np.linalg.norm(residual_trans)
-
-                # Jacobian 설정: 노드 i는 -I, 노드 j는 +I
-                J_i_trans = -np.eye(3)
-                J_j_trans = np.eye(3)
-
-                # 위치에 대한 가중치 적용
-                W_trans_between = np.sqrt(self.weight_trans_between) * np.eye(3)
-
-                residual_trans_weighted = W_trans_between @ residual_trans
-                J_i_trans_weighted = W_trans_between @ J_i_trans
-                J_j_trans_weighted = W_trans_between @ J_j_trans
-
-                # Hessian 및 b 업데이트
-                H_trans_ii = J_i_trans_weighted.T @ J_i_trans_weighted
-                H_trans_jj = J_j_trans_weighted.T @ J_j_trans_weighted
-                H_trans_ij = J_i_trans_weighted.T @ J_j_trans_weighted
-
-                H_trans[3 * i : 3 * (i + 1), 3 * i : 3 * (i + 1)] += H_trans_ii
-                H_trans[3 * j : 3 * (j + 1), 3 * j : 3 * (j + 1)] += H_trans_jj
-                H_trans[3 * i : 3 * (i + 1), 3 * j : 3 * (j + 1)] += H_trans_ij
-                H_trans[3 * j : 3 * (j + 1), 3 * i : 3 * (i + 1)] += H_trans_ij.T
-
-                b_trans[3 * i : 3 * (i + 1)] += J_i_trans_weighted.T @ residual_trans_weighted
-                b_trans[3 * j : 3 * (j + 1)] += J_j_trans_weighted.T @ residual_trans_weighted
-
-            # 위치 업데이트 해를 계산 (H_trans * dtrans = -b_trans)
-            try:
-                damping_trans = 0.000
-                H_trans_damped = H_trans + damping_trans * np.eye(H_trans.shape[0])
-                dtrans = np.linalg.solve(H_trans_damped, -b_trans)
-            except np.linalg.LinAlgError:
-                print("Singular translation matrix encountered during optimization.")
-                break
-
-            # 위치 업데이트 적용
-            for node_id in node_ids:
-                idx = node_id_to_idx[node_id]
-                delta_trans = dtrans[3 * idx : 3 * (idx + 1)]
-                self.nodes[node_id].pose[:3, 3] += delta_trans
-
-            # 업데이트의 노름 계산하여 수렴 여부 확인
-            norm_drot = np.linalg.norm(drot)
-            norm_dtrans = np.linalg.norm(dtrans)
-            norm_dx = norm_drot + norm_dtrans
-            iteration_msg = f"Iteration {iteration}: |drot| = {norm_drot:.6f}, |dtrans| = {norm_dtrans:.6f}, total_residual = {total_residual:.6f}"
-            iteration_msg_list.append(iteration_msg)
-            print(iteration_msg)
-
-            if norm_dx < tolerance:
-                print(f"Converged at iteration {iteration}")
-                break
-
-            if iteration == max_iterations - 1:
-                print("Reached maximum iterations without convergence.")
-
-        print("Optimization done.\n")
-        for msg in iteration_msg_list:
-            print(msg)
-
-    def get_solution(self, node_id):
-        """
-        최적화된 포즈를 반환합니다.
-
-        Parameters:
-        - node_id: 노드의 문자열 ID
-
-        Returns:
-        - SE(3) 포즈 행렬
-        """
-        if node_id not in self.nodes:
-            raise ValueError(f"Node '{node_id}' does not exist.")
-        return self.nodes[node_id].pose.copy()
-
-
-def plot_graph(pose_graph, ax, color="b", label_prefix="Pose"):
-    """
-    포즈 그래프의 노드 포즈를 3D 플롯에 시각화합니다.
-
-    Parameters:
-    - pose_graph: PoseGraph 객체
-    - ax: matplotlib 3D Axes 객체
-    - color: 화살표 색상
-    - label_prefix: 레이블 접두사
-    """
-    for node_id, node in pose_graph.nodes.items():
-        origin = node.pose[:3, 3]
-        R = node.pose[:3, :3]
-        colors = ["r", "g", "b"]
+    for idx, pose in enumerate(pose_list):
+        origin = pose.t  # Translation vector
+        R = pose.R  # Rotation matrix
+        colors = ['r', 'g', 'b']
         for i in range(3):
-            vec = R[:, i]
             ax.quiver(
-                origin[0],
-                origin[1],
-                origin[2],
-                vec[0],
-                vec[1],
-                vec[2],
-                color=colors[i],
-                length=0.3,
-                normalize=True,
+                origin[0], origin[1], origin[2],
+                R[0, i], R[1, i], R[2, i],
+                color=colors[i], length=0.3, normalize=True
             )
-        ax.scatter(
-            origin[0],
-            origin[1],
-            origin[2],
-            s=50,
-            label=(
-                f"{label_prefix} {node_id}"
-            ),
-        )
+        # Add label only to the first node to avoid duplication
+        if idx == 0:
+            ax.scatter(origin[0], origin[1], origin[2], s=50, label=f"{label_prefix} {chr(ord('A') + idx)}", color=color)
+        else:
+            ax.scatter(origin[0], origin[1], origin[2], s=50, color=color)
+    # Remove duplicate legends
+    handles, labels = ax.get_legend_handles_labels()
+    unique = dict(zip(labels, handles))
+    ax.legend(unique.values(), unique.keys())
 
+class Pose:
+    def __init__(self, rotation=np.eye(3), translation=np.zeros(3)):
+        self.R = rotation  # Rotation matrix
+        self.t = translation  # Translation vector
 
-def main():
-    # PoseGraph 객체 생성
-    graph = PoseGraph()
+    def as_matrix(self):
+        """Return the homogeneous transformation matrix."""
+        T = np.eye(4)
+        T[:3, :3] = self.R
+        T[:3, 3] = self.t
+        return T
 
-    delta_yaw = np.deg2rad(90)  # 90도 회전을 라디안으로 변환
+    @staticmethod
+    def from_matrix(T):
+        """Create a Pose from a homogeneous transformation matrix."""
+        rotation = T[:3, :3]
+        translation = T[:3, 3]
+        return Pose(rotation, translation)
 
-    # 1. 노드 A, B, C, D, E 추가 (네모를 형성하는 5개 노드)
-    initial_pose_A = create_pose_matrix(0, 0, 0, np.array([0, 0, 0]))
-    graph.generate_node_at_graph("A", initial_pose=initial_pose_A)
+    def inverse(self):
+        """Compute the inverse of this pose."""
+        R_inv = self.R.T
+        t_inv = -R_inv @ self.t
+        return Pose(R_inv, t_inv)
 
-    move_once = create_pose_matrix(0, 0, delta_yaw, np.array([1, 0, 0]))
-    initial_pose_B = initial_pose_A @ move_once
-    graph.generate_node_at_graph("B", initial_pose=initial_pose_B)
-
-    initial_pose_C = initial_pose_B @ move_once
-    graph.generate_node_at_graph("C", initial_pose=initial_pose_C)
-
-    initial_pose_D = initial_pose_C @ move_once
-    graph.generate_node_at_graph("D", initial_pose=initial_pose_D)
-
-    initial_pose_E = initial_pose_D @ move_once
-    graph.generate_node_at_graph("E", initial_pose=initial_pose_E)
-
-    # 2. Prior Factors 추가
-    prior_A = create_pose_matrix(0, 0, 0, np.array([0, 0, 0]))
-    graph.add_prior_factor("A", prior_A)
-
-    if 0:
-        graph.add_prior_factor("B", initial_pose_B)
-        graph.add_prior_factor("C", initial_pose_C)
-        graph.add_prior_factor("D", initial_pose_D)
-        graph.add_prior_factor("E", initial_pose_E)
-
-    # 3. 초기 추정치에 노이즈 추가
-    for node_id in ["B", "C", "D", "E"]:
-        initial_pose = graph.get_solution(node_id).copy()
-
-        # 회전 노이즈 추가 (0.1 rad)
-        # noise_rot = 0.01 * np.random.randn(3)
-        # noise_trans = 0.01 * np.random.randn(3)
-        noise_rot = 0.01 * np.random.randn(3)
-        noise_trans = 0.2 * np.random.randn(3)
+    def noised(self):
+        noise_rot = 0.1 * np.random.randn(3)
+        noise_trans = 0.05 * np.random.randn(3)
         
-        initial_rotation = R.from_matrix(initial_pose[:3, :3])
-        noisy_rotation = initial_rotation * R.from_rotvec(noise_rot)
-        initial_pose[:3, :3] = noisy_rotation.as_matrix()
-        initial_pose[:3, 3] += noise_trans
+        noised_R = self.R @ R.from_rotvec(noise_rot).as_matrix()
+        noised_t = self.t + noise_trans
 
-        # 노드의 초기 추정치 업데이트
-        graph.nodes[node_id].pose = initial_pose
+        return Pose(noised_R, noised_t)
 
-    # 4. Between Factors 추가 (각 Between Factor에 90도 회전 추가)
-    if 1:
-        between_AB = move_once
-        graph.add_between_factor("A", "B", between_AB)
+    def __mul__(self, other):
+        """Compose this pose with another pose."""
+        R_new = self.R @ other.R
+        t_new = self.R @ other.t + self.t
+        return Pose(R_new, t_new)
 
-        between_BC = move_once
-        graph.add_between_factor("B", "C", between_BC)
+def hat(v):
+    """Skew-symmetric matrix for a vector."""
+    return np.array([
+        [0, -v[2], v[1]],
+        [v[2], 0, -v[0]],
+        [-v[1], v[0], 0]
+    ])
 
-        between_CD = move_once
-        graph.add_between_factor("C", "D", between_CD)
+def vee(M):
+    """Inverse of the hat operator."""
+    return np.array([M[2,1], M[0,2], M[1,0]])
 
-        between_DE = move_once
-        graph.add_between_factor("D", "E", between_DE)
+def se3_to_SE3(xi):
+    """Exponential map from se(3) to SE(3)."""
+    omega = xi[:3]
+    v = xi[3:]
+    theta = np.linalg.norm(omega)
+    if theta < 1e-10:
+        R = np.eye(3)
+        t = v
+    else:
+        omega_hat = hat(omega / theta)
+        R = np.eye(3) + np.sin(theta) * omega_hat + (1 - np.cos(theta)) * (omega_hat @ omega_hat)
+        V = np.eye(3) + ((1 - np.cos(theta)) / theta) * omega_hat + ((theta - np.sin(theta)) / theta) * (omega_hat @ omega_hat)
+        t = V @ v
+    return Pose(R, t)
 
-        between_CE = move_once @ move_once
-        graph.add_between_factor("C", "E", between_CE)
+def SE3_to_se3(T):
+    """Logarithm map from SE(3) to se(3)."""
+    R_mat = T.R
+    t = T.t
 
-        # between_AE = initial_pose_E @ np.linalg.inv(initial_pose_A)
-        # graph.add_between_factor("A", "E", between_AE)
+    theta = np.arccos(np.clip((np.trace(R_mat) - 1) / 2, -1, 1))
+    if theta < 1e-10:
+        omega = np.zeros(3)
+        v = t
+    else:
+        ln_R = (theta / (2 * np.sin(theta))) * (R_mat - R_mat.T)
+        omega = vee(ln_R)
+        omega_hat = ln_R
+        A_inv = np.eye(3) - 0.5 * omega_hat + ((1 / theta**2) - (1 + np.cos(theta)) / (2 * theta * np.sin(theta))) * (omega_hat @ omega_hat)
+        v = A_inv @ t
+    xi = np.hstack((omega, v))
+    return xi
 
-    # 5. 최적화 이전의 포즈 시각화
-    ax_lim = 5.0
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    plot_graph(graph, ax, color="b", label_prefix="Initial Pose")
-    ax.set_box_aspect([1, 1, 1])
-    ax.set_xlim([-ax_lim, ax_lim])
-    ax.set_ylim([-ax_lim, ax_lim])
-    ax.set_zlim([-ax_lim, ax_lim])
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
-    ax.set_zlabel("Z")
-    ax.set_title("Before Optimization")
-    ax.legend()
-    plt.show()
-
-    # 6. 그래프 최적화 수행
-    graph.solve_graph()
-
-    # 7. 최적화 이후의 포즈 시각화
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    plot_graph(graph, ax, color="g", label_prefix="Optimized Pose")
-    ax.set_box_aspect([1, 1, 1])
-    ax.set_xlim([-ax_lim, ax_lim])
-    ax.set_ylim([-ax_lim, ax_lim])
-    ax.set_zlim([-ax_lim, ax_lim])
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
-    ax.set_zlabel("Z")
-    ax.set_title("After Optimization")
-    ax.legend()
-    plt.show()
-
-    # 8. 최적화 결과 출력
-    print("\nOptimized Poses:")
-    for node_id in graph.nodes:
-        pose = graph.get_solution(node_id)
-        print(f"Node {node_id}:\n{pose}\n")
+def compute_error(T_i, T_j, Z_ij):
+    """Compute the error for an edge."""
+    E = T_i.inverse() * T_j  # Estimated relative transformation
+    E_inv = Z_ij.inverse() * E
+    e = SE3_to_se3(E_inv)
+    return e
 
 
+def build_linear_system(poses, edges, priors=[], weight_prior=1e6):
+    """Construct the linear system for optimization."""
+    N = len(poses)
+    H = np.zeros((6*N, 6*N))
+    b = np.zeros(6*N)
+    for edge in edges:
+        i, j, Z_ij = edge['i'], edge['j'], edge['measurement']
+        T_i = poses[i]
+        T_j = poses[j]
+        e_ij = compute_error(T_i, T_j, Z_ij)
 
-if __name__ == "__main__":
-    main()
+        # Jacobians w.r.t T_i and T_j (approximate as identity for simplicity)
+        J_i = -np.eye(6)
+        J_j = np.eye(6)
+
+        # Generate arrays of indices instead of slices
+        idx_i = np.arange(6*i, 6*i+6)
+        idx_j = np.arange(6*j, 6*j+6)
+
+        # Accumulate H and b using np.ix_ with arrays
+        weight = edge.get('weight', 100.0)  # 가중치를 가져오고, 없으면 1로 기본 설정
+        H[np.ix_(idx_i, idx_i)] += weight * (J_i.T @ J_i)
+        H[np.ix_(idx_i, idx_j)] += weight * (J_i.T @ J_j)
+        H[np.ix_(idx_j, idx_i)] += weight * (J_j.T @ J_i)
+        H[np.ix_(idx_j, idx_j)] += weight * (J_j.T @ J_j)
+        b[idx_i] += weight * (J_i.T @ e_ij)
+        b[idx_j] += weight * (J_j.T @ e_ij)
+
+    # Process prior residuals
+    for prior in priors:
+        i = prior['i']
+        Z_i = prior['measurement']
+        T_i = poses[i]
+
+        e_i = SE3_to_se3(T_i.inverse() * Z_i)
+        J_i = -np.eye(6)
+        idx_i = np.arange(6*i, 6*i+6)
+        H[np.ix_(idx_i, idx_i)] += weight_prior * (J_i.T @ J_i)
+        b[idx_i] += weight_prior * (J_i.T @ e_i)
+    return H, b
+
+def pose_graph_optimization(poses, edges, iterations=30):
+    """Perform pose-graph optimization."""
+    N = len(poses)
+
+    # priors = [{'i': 0, 'measurement': Pose()}, {'i': N-1, 'measurement': initial_poses[-1]}]
+    # priors = [{'i': 0, 'measurement': Pose()}]
+    priors = [{'i': N-1, 'measurement': Pose()}]
+    # priors = [{'i': int(N/2) - 1, 'measurement': Pose()}]
+
+    print(f"priors: {priors}")
+    weight_prior = 1e8
+    for iter in range(iterations):
+        print(f"iter {iter}")
+        H, b = build_linear_system(poses, edges, priors, weight_prior)
+        # Remove the fixation of the first pose, since priors are used
+        # H[:6, :6] += np.eye(6) * 1e6  # This line is now redundant
+        delta = np.linalg.solve(H, -b)
+        # print(f"Iteration {_+1} - dx:\n {delta}")
+        # Update poses
+        for i in range(N):
+            idx = slice(6*i, 6*i+6)
+            xi = delta[idx]
+            delta_pose = se3_to_SE3(xi)
+
+            # poses[i] = delta_pose * poses[i] 
+            poses[i] = poses[i] * delta_pose
+    return poses
+
+# Example usage:
+# Initialize poses and edges
+
+num_nodes = 10
+odom_rot_yaw_deg = 20
+odom_rot_yaw_rad = np.deg2rad(odom_rot_yaw_deg)
+move_forward_size = 0.05 * odom_rot_yaw_deg
+
+edges = []
+for node_ii in range(num_nodes - 1):
+    edges.append({'i': node_ii, 'j': node_ii + 1, 
+                  'measurement': Pose(R.from_euler('z', odom_rot_yaw_rad).as_matrix()[:3, :3], np.array([move_forward_size, 0, 0]))})
+
+# Create initial poses without noise
+initial_poses = []
+initial_poses.append(Pose())  # Pose 0 at identity
+for i in range(1, num_nodes):
+    prev_pose = initial_poses[i-1]
+    measurement = edges[i-1]['measurement']
+    new_pose = prev_pose * measurement  # No noise added
+    initial_poses.append(new_pose)
+
+# Now, add edges between nodes that are k steps apart
+for dense_connection_k in [2]:
+    for i in range(num_nodes - dense_connection_k):
+        # Compute the measurement between node i and node i+k
+        Z_ik = initial_poses[i].inverse() * initial_poses[i+dense_connection_k]
+        # Optionally, add noise to Z_ik
+        # Z_ik = Z_ik.noised()
+        edges.append({'i': i, 'j': i+dense_connection_k, 'measurement': Z_ik})
+
+# loop closing
+# edges.append({'i': 0, 'j': num_nodes-1, 'measurement': Pose()})
+
+# Initialize poses with noise for optimization
+poses = []
+poses.append(Pose())  # Pose 0 at identity
+for i in range(1, num_nodes):
+
+    pose = copy.deepcopy(initial_poses[i-1])
+    # pose = copy.deepcopy(poses[i-1])
+
+    measurement = copy.deepcopy(edges[i-1]['measurement'])
+
+    pose.t[0] += 0.01*i # mimic incremental z drift
+    pose.t[1] += 0.01*i # mimic incremental z drift
+    pose.t[2] += 0.03*i # mimic incremental z drift
+
+    # try 0: this fails numerically ... 
+    noise_rotvec = 0.2 * np.random.randn(3)    
+    noise_rotmat = R.from_rotvec(noise_rotvec).as_matrix()
+    pose.R = noise_rotmat # np.eye(3)
+    print("pose.R = noise_rotmat\n", pose.R)
+
+    # try 1: all eye is working ... 
+    # pose.R = np.eye(3) # pose.R @ 
+
+    print("pose.R = np.eye(3)\n", pose.R)
+    
+    new_pose = copy.deepcopy(pose) # * (measurement) #* measurement.noised()
+
+    poses.append(new_pose)
+
+# Run optimization
+optimized_poses = pose_graph_optimization(poses.copy(), edges)
+
+#################################################
+max_ax_lim = 10
+# Plot initial poses
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+plot_poses(poses, ax, color='b', label_prefix='Initial Pose')
+ax.set_box_aspect([1,1,1])
+ax.set_xlim([-max_ax_lim, max_ax_lim])
+ax.set_ylim([-max_ax_lim, max_ax_lim])
+ax.set_zlim([-max_ax_lim, max_ax_lim])
+ax.set_xlabel("X")
+ax.set_ylabel("Y")
+ax.set_zlabel("Z")
+ax.set_title("Before Optimization")
+plt.show()
+
+# Plot optimized poses
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+plot_poses(optimized_poses, ax, color='g', label_prefix='Optimized Pose')
+ax.set_box_aspect([1,1,1])
+ax.set_xlim([-max_ax_lim, max_ax_lim])
+ax.set_ylim([-max_ax_lim, max_ax_lim])
+ax.set_zlim([-max_ax_lim, max_ax_lim])
+ax.set_xlabel("X")
+ax.set_ylabel("Y")
+ax.set_zlabel("Z")
+ax.set_title("After Optimization")
+plt.show()

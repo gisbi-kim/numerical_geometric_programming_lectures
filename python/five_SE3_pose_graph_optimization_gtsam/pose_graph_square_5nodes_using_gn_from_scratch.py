@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 import matplotlib.pyplot as plt
+import copy 
 
 def plot_poses(pose_list, ax, color='b', label_prefix='Pose'):
     """
@@ -160,17 +161,19 @@ def build_linear_system(poses, edges, priors=[], weight_prior=1e6):
         b[idx_i] += weight_prior * (J_i.T @ e_i)
     return H, b
 
-def pose_graph_optimization(poses, edges, iterations=100):
+def pose_graph_optimization(poses, edges, iterations=30):
     """Perform pose-graph optimization."""
     N = len(poses)
 
     # priors = [{'i': 0, 'measurement': Pose()}, {'i': N-1, 'measurement': initial_poses[-1]}]
     # priors = [{'i': 0, 'measurement': Pose()}]
-    priors = [{'i': int(N/2) - 1, 'measurement': Pose()}]
+    priors = [{'i': N-1, 'measurement': Pose()}]
+    # priors = [{'i': int(N/2) - 1, 'measurement': Pose()}]
 
     print(f"priors: {priors}")
     weight_prior = 1e8
-    for _ in range(iterations):
+    for iter in range(iterations):
+        print(f"iter {iter}")
         H, b = build_linear_system(poses, edges, priors, weight_prior)
         # Remove the fixation of the first pose, since priors are used
         # H[:6, :6] += np.eye(6) * 1e6  # This line is now redundant
@@ -181,20 +184,23 @@ def pose_graph_optimization(poses, edges, iterations=100):
             idx = slice(6*i, 6*i+6)
             xi = delta[idx]
             delta_pose = se3_to_SE3(xi)
-            poses[i] = delta_pose * poses[i]
+
+            # poses[i] = delta_pose * poses[i] 
+            poses[i] = poses[i] * delta_pose
     return poses
 
 # Example usage:
 # Initialize poses and edges
 
-num_nodes = 30
-odom_rot_yaw_deg = 3
+num_nodes = 10
+odom_rot_yaw_deg = 20
 odom_rot_yaw_rad = np.deg2rad(odom_rot_yaw_deg)
+move_forward_size = 0.05 * odom_rot_yaw_deg
 
 edges = []
 for node_ii in range(num_nodes - 1):
     edges.append({'i': node_ii, 'j': node_ii + 1, 
-                  'measurement': Pose(R.from_euler('z', odom_rot_yaw_rad).as_matrix()[:3, :3], np.array([0.3, 0, 0]))})
+                  'measurement': Pose(R.from_euler('z', odom_rot_yaw_rad).as_matrix()[:3, :3], np.array([move_forward_size, 0, 0]))})
 
 # Create initial poses without noise
 initial_poses = []
@@ -221,9 +227,29 @@ for dense_connection_k in [2]:
 poses = []
 poses.append(Pose())  # Pose 0 at identity
 for i in range(1, num_nodes):
-    prev_pose = poses[i-1]
-    measurement = edges[i-1]['measurement']
-    new_pose = prev_pose * measurement.noised()
+
+    pose = copy.deepcopy(initial_poses[i-1])
+    # pose = copy.deepcopy(poses[i-1])
+
+    measurement = copy.deepcopy(edges[i-1]['measurement'])
+
+    pose.t[0] += 0.01*i # mimic incremental z drift
+    pose.t[1] += 0.01*i # mimic incremental z drift
+    pose.t[2] += 0.03*i # mimic incremental z drift
+
+    # try 0: this fails numerically ... 
+    noise_rotvec = 0.2 * np.random.randn(3)    
+    noise_rotmat = R.from_rotvec(noise_rotvec).as_matrix()
+    pose.R = noise_rotmat # np.eye(3)
+    print("pose.R = noise_rotmat\n", pose.R)
+
+    # try 1: all eye is working ... 
+    # pose.R = np.eye(3) # pose.R @ 
+
+    print("pose.R = np.eye(3)\n", pose.R)
+    
+    new_pose = copy.deepcopy(pose) # * (measurement) #* measurement.noised()
+
     poses.append(new_pose)
 
 # Run optimization
