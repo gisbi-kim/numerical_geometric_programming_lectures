@@ -110,7 +110,7 @@ def skew(omega):
     )
 
 
-def oplus(T, tangent_vec):
+def oplus(T, tangent_vec, inplace_force_SO3_property=False):
     """
     Update SE(3) or SO(3) matrix T using a tangent vector.
     - If tangent_vec has 6 elements, it represents SE(3) (3 for rotation, 3 for translation).
@@ -123,8 +123,6 @@ def oplus(T, tangent_vec):
     Returns:
     - T_updated: Updated SE(3) or SO(3) matrix.
     """
-
-    inplace_force_SO3_property = True 
 
     if tangent_vec.shape == (6,):
         # SE(3) Update

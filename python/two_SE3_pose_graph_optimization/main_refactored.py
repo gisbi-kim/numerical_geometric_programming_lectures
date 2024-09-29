@@ -305,7 +305,7 @@ def main():
     graph.add_prior_factor("B", prior_B)
 
     # 3. Between Residual 추가: A와 B 사이의 상대 포즈는 x로 0.5만큼 이동, 회전 없음
-    between_AB = create_pose_matrix(0, 0, 0, np.array([0.5, 0, 0]))
+    between_AB = create_pose_matrix(0, 0, 0, np.array([0.9, 0, 0]))
     graph.add_between_factor("A", "B", between_AB)
 
     # 4. 초기 추정치에 노이즈 추가 (노드 B만)
