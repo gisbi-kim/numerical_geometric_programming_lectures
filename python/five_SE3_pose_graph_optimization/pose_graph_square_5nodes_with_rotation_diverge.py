@@ -16,21 +16,9 @@ def create_rotation_matrix(roll, pitch, yaw):
     """
     롤, 피치, 요 각을 사용하여 회전 행렬을 생성합니다.
     """
-    R_x = np.array(
-        [[1, 0, 0], [0, np.cos(roll), -np.sin(roll)], [0, np.sin(roll), np.cos(roll)]]
-    )
-    R_y = np.array(
-        [
-            [np.cos(pitch), 0, np.sin(pitch)],
-            [0, 1, 0],
-            [-np.sin(pitch), 0, np.cos(pitch)],
-        ]
-    )
-    R_z = np.array(
-        [[np.cos(yaw), -np.sin(yaw), 0], [np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]]
-    )
-    R = R_z @ R_y @ R_x
-    return R
+    # R.from_euler()를 사용하여 회전 행렬 생성
+    rotation = R.from_euler('xyz', [roll, pitch, yaw])
+    return rotation.as_matrix()  # 회전 행렬로 변환하여 반환
 
 
 def create_pose_matrix(roll, pitch, yaw, position):
@@ -156,6 +144,8 @@ class PoseGraph:
             H.fill(0)
             b.fill(0)
 
+            total_residual = 0.0  # total residual 초기화
+
             # Prior Residuals
             for prior in self.prior_factors:
                 i = node_id_to_idx[prior.node_id]
@@ -169,6 +159,8 @@ class PoseGraph:
                 dt = T_residual[:3, 3]
 
                 residual = np.hstack((dtheta, dt))
+
+                total_residual += np.linalg.norm(residual)  # residual의 노름을 total_residual에 더함
 
                 # Jacobian은 단위 행렬 (Prior Residual은 노드 자체에만 영향)
                 J = np.eye(6)
@@ -194,6 +186,7 @@ class PoseGraph:
                 dtheta = Log_map(R_residual)
                 dt = T_residual[:3, 3]
                 residual = np.hstack((dtheta, dt))
+                total_residual += np.linalg.norm(residual)  # residual의 노름을 total_residual에 더함
 
                 # Jacobian 설정: 노드 i는 -I, 노드 j는 +I
                 J_i = -np.eye(6)
@@ -220,13 +213,22 @@ class PoseGraph:
 
             # Solve H * dx = -b
             try:
-                dx = np.linalg.solve(H, -b)
+                mode = "LM" # or "GN"
+                if mode == "GN":
+                    dx = np.linalg.solve(H, -b)
+                elif mode == "LM":
+                    damping= 1e-3
+                    H_damped = H + (damping * np.eye(H.shape[0]))
+                    dx = np.linalg.solve(H_damped, -b)
             except np.linalg.LinAlgError:
                 print("Singular matrix encountered during optimization.")
                 break
 
             # Check convergence
-            if np.linalg.norm(dx) < tolerance:
+            norm_dx = np.linalg.norm(dx)
+            print(f"Iteration {iteration}: |dx| = {norm_dx:.6f}, total_residual = {total_residual:.6f}")
+
+            if norm_dx < tolerance:
                 print(f"Converged at iteration {iteration}")
                 break
 
@@ -288,8 +290,6 @@ def plot_graph(pose_graph, ax, color="b", label_prefix="Pose"):
             s=50,
             label=(
                 f"{label_prefix} {node_id}"
-                if node_id == list(pose_graph.nodes.keys())[0]
-                else ""
             ),
         )
 
@@ -298,46 +298,55 @@ def main():
     # PoseGraph 객체 생성
     graph = PoseGraph()
 
-    delta_yaw = np.deg2rad(90)  # 90도 회전을 라디안으로 변환
+    delta_yaw = np.deg2rad(-20)  # 90도 회전을 라디안으로 변환
 
     # 1. 노드 A, B, C, D, E 추가 (네모를 형성하는 5개 노드)
     initial_pose_A = create_pose_matrix(0, 0, 0, np.array([0, 0, 0]))
     graph.generate_node_at_graph("A", initial_pose=initial_pose_A)
 
-    initial_pose_B = create_pose_matrix(0, 0, delta_yaw, np.array([0, 1, 0]))
+    initial_pose_B = create_pose_matrix(0, 0, delta_yaw, np.array([1, 0, 0]))
     graph.generate_node_at_graph("B", initial_pose=initial_pose_B)
+    print(f"initial_pose_B \n{initial_pose_B}")
 
-    initial_pose_C = create_pose_matrix(0, 0, 2 * delta_yaw, np.array([-1, 1, 0]))
+    initial_pose_C = create_pose_matrix(0, 0, 2 * delta_yaw, np.array([1, 1, 0]))
     graph.generate_node_at_graph("C", initial_pose=initial_pose_C)
+    print(f"initial_pose_C \n{initial_pose_C}")
 
-    initial_pose_D = create_pose_matrix(0, 0, 3 * delta_yaw, np.array([-1, 0, 0]))
+    initial_pose_D = create_pose_matrix(0, 0, 3 * delta_yaw, np.array([0, 1, 0]))
     graph.generate_node_at_graph("D", initial_pose=initial_pose_D)
+    print(f"initial_pose_D \n{initial_pose_D}")
 
-    initial_pose_E = create_pose_matrix(0, 0, 0, np.array([0, 0, 0]))
+    initial_pose_E = create_pose_matrix(0, 0, 4 * delta_yaw, np.array([0, 0, 0]))
     graph.generate_node_at_graph("E", initial_pose=initial_pose_E)
+    print(f"initial_pose_E \n{initial_pose_E}")
 
     # 2. Prior Factors 추가
     prior_A = create_pose_matrix(0, 0, 0, np.array([0, 0, 0]))
     graph.add_prior_factor("A", prior_A)
 
+    # graph.add_prior_factor("B", initial_pose_B)
+    # graph.add_prior_factor("C", initial_pose_C)
+    # graph.add_prior_factor("D", initial_pose_D)
+    # graph.add_prior_factor("E", initial_pose_E)
+
     # 3. Between Factors 추가 (각 Between Factor에 90도 회전 추가)
-    between_AB = create_pose_matrix(0, 0, delta_yaw, np.array([0, 1, 0]))
+    between_AB = create_pose_matrix(0, 0, delta_yaw, np.array([1, 0, 0]))
     graph.add_between_factor("A", "B", between_AB)
 
-    between_BC = create_pose_matrix(0, 0, delta_yaw, np.array([-1, 0, 0]))
+    between_BC = create_pose_matrix(0, 0, delta_yaw, np.array([1, 0, 0]))
     graph.add_between_factor("B", "C", between_BC)
 
-    between_CD = create_pose_matrix(0, 0, delta_yaw, np.array([0, -1, 0]))
+    between_CD = create_pose_matrix(0, 0, delta_yaw, np.array([1, 0, 0]))
     graph.add_between_factor("C", "D", between_CD)
 
     between_DE = create_pose_matrix(0, 0, delta_yaw, np.array([1, 0, 0]))
     graph.add_between_factor("D", "E", between_DE)
 
-    between_EA = create_pose_matrix(0, 0, delta_yaw, np.array([0, 0, 0]))
+    between_EA = create_pose_matrix(0, 0, 4*delta_yaw, np.array([4, 0, 0]))
     graph.add_between_factor("E", "A", between_EA)
 
     # 4. 초기 추정치에 노이즈 추가
-    np.random.seed(42)  # 재현성을 위해 시드 고정
+    # np.random.seed(42)  # 재현성을 위해 시드 고정
 
     for node_id in ["B", "C", "D", "E"]:
         initial_pose = graph.get_solution(node_id).copy()
@@ -356,12 +365,14 @@ def main():
         graph.nodes[node_id].pose = initial_pose
 
     # 5. 최적화 이전의 포즈 시각화
+    ax_lim = 5.0
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
     plot_graph(graph, ax, color="b", label_prefix="Initial Pose")
-    ax.set_xlim([-1.5, 1.5])
-    ax.set_ylim([-1.5, 1.5])
-    ax.set_zlim([-0.5, 0.5])
+    ax.set_box_aspect([1, 1, 1])
+    ax.set_xlim([-ax_lim, ax_lim])
+    ax.set_ylim([-ax_lim, ax_lim])
+    ax.set_zlim([-ax_lim, ax_lim])
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_zlabel("Z")
@@ -376,9 +387,10 @@ def main():
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
     plot_graph(graph, ax, color="g", label_prefix="Optimized Pose")
-    ax.set_xlim([-1.5, 1.5])
-    ax.set_ylim([-1.5, 1.5])
-    ax.set_zlim([-0.5, 0.5])
+    ax.set_box_aspect([1, 1, 1])
+    ax.set_xlim([-ax_lim, ax_lim])
+    ax.set_ylim([-ax_lim, ax_lim])
+    ax.set_zlim([-ax_lim, ax_lim])
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_zlabel("Z")

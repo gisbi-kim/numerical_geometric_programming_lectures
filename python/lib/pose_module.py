@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 
 
 def log_map(dR):
@@ -19,15 +20,22 @@ def log_map(dR):
     - k is a scaling factor derived from the angle of rotation, and the result is
       the scaled difference between dR and its transpose, which gives the skew-symmetric matrix.
     """
-    angleaxis = np.arccos((np.trace(dR) - 1) / 2)
+    angleaxis = np.arccos(np.clip((np.trace(dR) - 1) / 2, -1.0, 1.0))
     if np.sin(angleaxis) == 0:
         return np.zeros((3, 3))
 
     k = angleaxis / (2 * np.sin(angleaxis))
     return k * (dR - dR.T)
 
-def Log_map(dR):
-    return unskew(log_map(dR))
+# def Log_map(dR):
+#     return unskew(log_map(dR))
+
+def Log_map(R_mat):
+    """
+    회전 행렬 R의 로그 맵을 계산하여 회전 벡터을 반환합니다.
+    """
+    rotation = R.from_matrix(R_mat)
+    return rotation.as_rotvec()
 
 # tangent space to rotation matrix
 def exp_map(omega):
@@ -110,7 +118,7 @@ def skew(omega):
     )
 
 
-def oplus(T, tangent_vec, inplace_force_SO3_property=False):
+def oplus(T, tangent_vec, inplace_force_SO3_property=True):
     """
     Update SE(3) or SO(3) matrix T using a tangent vector.
     - If tangent_vec has 6 elements, it represents SE(3) (3 for rotation, 3 for translation).
