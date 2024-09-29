@@ -26,6 +26,8 @@ def log_map(dR):
     k = angleaxis / (2 * np.sin(angleaxis))
     return k * (dR - dR.T)
 
+def Log_map(dR):
+    return unskew(log_map(dR))
 
 # tangent space to rotation matrix
 def exp_map(omega):
@@ -160,6 +162,8 @@ def oplus(T, tangent_vec):
             T = U @ Vt
 
     else:
-        raise ValueError("tangent_vec must be either a 3-dimensional or 6-dimensional vector.")
+        raise ValueError(
+            "tangent_vec must be either a 3-dimensional or 6-dimensional vector."
+        )
 
     return T
