@@ -192,8 +192,8 @@ def pose_graph_optimization(poses, edges, iterations=30):
 # Example usage:
 # Initialize poses and edges
 
-num_nodes = 10
-odom_rot_yaw_deg = 20
+num_nodes = 30
+odom_rot_yaw_deg = 10
 odom_rot_yaw_rad = np.deg2rad(odom_rot_yaw_deg)
 move_forward_size = 0.05 * odom_rot_yaw_deg
 
@@ -233,12 +233,12 @@ for i in range(1, num_nodes):
 
     measurement = copy.deepcopy(edges[i-1]['measurement'])
 
-    pose.t[0] += 0.01*i # mimic incremental z drift
-    pose.t[1] += 0.01*i # mimic incremental z drift
-    pose.t[2] += 0.03*i # mimic incremental z drift
+    pose.t[0] += 0.1*i # mimic incremental z drift
+    pose.t[1] += 0.1*i # mimic incremental z drift
+    pose.t[2] += 0.3*i # mimic incremental z drift
 
     # try 0: this fails numerically ... 
-    noise_rotvec = 0.2 * np.random.randn(3)    
+    noise_rotvec = 0.02 * np.random.randn(3)    
     noise_rotmat = R.from_rotvec(noise_rotvec).as_matrix()
     pose.R = noise_rotmat # np.eye(3)
     print("pose.R = noise_rotmat\n", pose.R)
