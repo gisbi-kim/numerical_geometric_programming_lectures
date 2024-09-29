@@ -52,8 +52,8 @@ class Pose:
         return Pose(R_inv, t_inv)
 
     def noised(self):
-        noise_rot = 0.01 * np.random.randn(3)
-        noise_trans = 0.2 * np.random.randn(3)
+        noise_rot = 0.1 * np.random.randn(3)
+        noise_trans = 0.05 * np.random.randn(3)
         
         noised_R = self.R @ R.from_rotvec(noise_rot).as_matrix()
         noised_t = self.t + noise_trans
@@ -118,6 +118,7 @@ def compute_error(T_i, T_j, Z_ij):
     e = SE3_to_se3(E_inv)
     return e
 
+
 def build_linear_system(poses, edges, priors=[], weight_prior=1e6):
     """Construct the linear system for optimization."""
     N = len(poses)
@@ -128,15 +129,17 @@ def build_linear_system(poses, edges, priors=[], weight_prior=1e6):
         T_i = poses[i]
         T_j = poses[j]
         e_ij = compute_error(T_i, T_j, Z_ij)
+
         # Jacobians w.r.t T_i and T_j (approximate as identity for simplicity)
         J_i = -np.eye(6)
         J_j = np.eye(6)
+
         # Generate arrays of indices instead of slices
         idx_i = np.arange(6*i, 6*i+6)
         idx_j = np.arange(6*j, 6*j+6)
 
         # Accumulate H and b using np.ix_ with arrays
-        weight = edge.get('weight', 1.0)  # 가중치를 가져오고, 없으면 1로 기본 설정
+        weight = edge.get('weight', 100.0)  # 가중치를 가져오고, 없으면 1로 기본 설정
         H[np.ix_(idx_i, idx_i)] += weight * (J_i.T @ J_i)
         H[np.ix_(idx_i, idx_j)] += weight * (J_i.T @ J_j)
         H[np.ix_(idx_j, idx_i)] += weight * (J_j.T @ J_i)
@@ -157,18 +160,22 @@ def build_linear_system(poses, edges, priors=[], weight_prior=1e6):
         b[idx_i] += weight_prior * (J_i.T @ e_i)
     return H, b
 
-def pose_graph_optimization(poses, edges, iterations=10):
+def pose_graph_optimization(poses, edges, iterations=100):
     """Perform pose-graph optimization."""
     N = len(poses)
-    priors = [{'i': 0, 'measurement': Pose()}, {'i': N-1, 'measurement': initial_poses[-1]}]
+
+    # priors = [{'i': 0, 'measurement': Pose()}, {'i': N-1, 'measurement': initial_poses[-1]}]
+    # priors = [{'i': 0, 'measurement': Pose()}]
+    priors = [{'i': int(N/2) - 1, 'measurement': Pose()}]
+
     print(f"priors: {priors}")
-    weight_prior = 1e6
+    weight_prior = 1e8
     for _ in range(iterations):
         H, b = build_linear_system(poses, edges, priors, weight_prior)
         # Remove the fixation of the first pose, since priors are used
         # H[:6, :6] += np.eye(6) * 1e6  # This line is now redundant
         delta = np.linalg.solve(H, -b)
-        print(f"Iteration {_+1} - dx:\n {delta}")
+        # print(f"Iteration {_+1} - dx:\n {delta}")
         # Update poses
         for i in range(N):
             idx = slice(6*i, 6*i+6)
@@ -180,8 +187,8 @@ def pose_graph_optimization(poses, edges, iterations=10):
 # Example usage:
 # Initialize poses and edges
 
-num_nodes = 100
-odom_rot_yaw_deg = 2
+num_nodes = 30
+odom_rot_yaw_deg = 3
 odom_rot_yaw_rad = np.deg2rad(odom_rot_yaw_deg)
 
 edges = []
@@ -199,13 +206,16 @@ for i in range(1, num_nodes):
     initial_poses.append(new_pose)
 
 # Now, add edges between nodes that are k steps apart
-for dense_connection_k in [2, 3, 4, 5]:
+for dense_connection_k in [2]:
     for i in range(num_nodes - dense_connection_k):
         # Compute the measurement between node i and node i+k
         Z_ik = initial_poses[i].inverse() * initial_poses[i+dense_connection_k]
         # Optionally, add noise to Z_ik
         # Z_ik = Z_ik.noised()
         edges.append({'i': i, 'j': i+dense_connection_k, 'measurement': Z_ik})
+
+# loop closing
+# edges.append({'i': 0, 'j': num_nodes-1, 'measurement': Pose()})
 
 # Initialize poses with noise for optimization
 poses = []
