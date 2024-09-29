@@ -129,6 +129,13 @@ def oplus(T, tangent_vec):
     # Update the rotation (SO(3) part) using exponential map
     T[:3, :3] = T[:3, :3] @ exp_map(dtheta_rot)
 
+    # Normalize the rotation part to ensure it's a valid SO(3) matrix
+    U, _, Vt = np.linalg.svd(T[:3, :3])
+    T[:3, :3] = U @ Vt
+    if np.linalg.det(T[:3, :3]) < 0:
+        U[:, -1] *= -1
+        T[:3, :3] = U @ Vt
+
     # Update the translation (R^3 part)
     T[:3, 3] += dtheta_trans
 

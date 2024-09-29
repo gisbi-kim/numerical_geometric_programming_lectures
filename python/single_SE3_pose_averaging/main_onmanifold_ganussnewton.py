@@ -129,13 +129,6 @@ def average_SE3(poses, max_iters=300, tolerance=1e-6):
         # Update SE(3) pose
         T_current_solution = oplus(T_current_solution, dx)
 
-        # Ensure the rotation part is a valid SO(3) matrix (det = 1)
-        U, _, Vt = np.linalg.svd(T_current_solution[:3, :3])
-        T_current_solution[:3, :3] = np.dot(U, Vt)
-        if np.linalg.det(T_current_solution[:3, :3]) < 0:
-            U[:, -1] *= -1
-            T_current_solution[:3, :3] = np.dot(U, Vt)
-
     return T_current_solution
 
 
