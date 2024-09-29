@@ -88,8 +88,13 @@ class PoseGraph:
         self.set_weights()
 
     def set_weights(self):
-        self.weight_prior = 0.5
-        self.weight_between = 2.5
+        self.rot_trans_scale_ratio = 0.1
+
+        self.weight_rot_prior = 100000000.0    # Prior에서 회전에 대한 가중치
+        self.weight_trans_prior = 100000000.0  # Prior에서 위치에 대한 가중치
+ 
+        self.weight_rot_between = 1.0   # Between에서 회전에 대한 가중치
+        self.weight_trans_between = 1.0 # Between에서 위치에 대한 가중치
 
     def generate_node_at_graph(self, node_id, initial_pose=None):
         """
@@ -143,15 +148,15 @@ class PoseGraph:
         node_ids = list(self.nodes.keys())
         node_id_to_idx = {node_id: idx for idx, node_id in enumerate(node_ids)}
         num_nodes = len(node_ids)
-        H = np.zeros((6 * num_nodes, 6 * num_nodes))
-        b = np.zeros(6 * num_nodes)
 
         for iteration in range(max_iterations):
-            H.fill(0.0)
-            b.fill(0.0)
+            # H.fill(0.0)
+            # b.fill(0.0)
+            H = np.zeros((6 * num_nodes, 6 * num_nodes))
+            b = np.zeros(6 * num_nodes)
 
             total_residual = 0.0  # total residual 초기화
-
+    
             # Prior Residuals
             for prior in self.prior_factors:
                 i = node_id_to_idx[prior.node_id]
@@ -162,24 +167,38 @@ class PoseGraph:
                 T_residual = np.linalg.inv(T_prior) @ T_est
                 R_residual = T_residual[:3, :3]
                 dtheta = Log_map(R_residual)
-                dt = T_residual[:3, 3]
+                dt = self.rot_trans_scale_ratio * T_residual[:3, 3]
 
                 residual = np.hstack((dtheta, dt))
 
-                total_residual += np.linalg.norm(residual)  # residual의 노름을 total_residual에 더함
+                total_residual += np.linalg.norm(residual)  # (for debug) residual의 노름을 total_residual에 더함
 
                 # Jacobian은 단위 행렬 (Prior Residual은 노드 자체에만 영향)
                 J = np.eye(6)
 
+                # 회전과 위치에 대한 가중치 적용
+                W_prior = np.diag(np.hstack([
+                    np.sqrt(self.weight_rot_prior) * np.ones(3),
+                    np.sqrt(self.weight_trans_prior) * np.ones(3)
+                ]))
+
+                residual_weighted = W_prior @ residual
+                J_weighted = W_prior @ J
+
                 # Hessian 및 b 업데이트
-                H_i = J.T @ J
-                b_i = J.T @ residual
+                H_i = J_weighted.T @ J_weighted
+                b_i = J_weighted.T @ residual_weighted
 
                 H[6 * i : 6 * (i + 1), 6 * i : 6 * (i + 1)] += H_i
                 b[6 * i : 6 * (i + 1)] += b_i
 
+
             # Between Residuals
+            if 50 < iteration:
+                break 
+            
             for between in self.between_factors:
+
                 i = node_id_to_idx[between.from_node_id]
                 j = node_id_to_idx[between.to_node_id]
                 T_i = self.nodes[between.from_node_id].pose
@@ -187,29 +206,42 @@ class PoseGraph:
                 T_AB = between.relative_pose
 
                 # Residual 계산: log_map(inv(T_i) * T_j * inv(T_AB))
-                T_residual = np.linalg.inv(T_i) @ T_j @ np.linalg.inv(T_AB)
+                T_est = np.linalg.inv(T_i) @ T_j
+                T_residual = T_est @ np.linalg.inv(T_AB)
                 R_residual = T_residual[:3, :3]
-                dtheta = Log_map(R_residual)
-                dt = T_residual[:3, 3]
-                residual = np.hstack((dtheta, dt))
+                drotvec = Log_map(R_residual)
+                dpos = self.rot_trans_scale_ratio * T_residual[:3, 3]
+
+                print(f"\n\n{iteration}: Relative Factor on node {between.from_node_id} and {between.to_node_id}")
+                print(f"T_AB (meas) \n{T_AB}")
+                print(f"T_AB (estm) \n{T_est}")
+                print(f"d rot: {drotvec}")
+                print(f"d pos: {dpos}")
+
+                residual = np.hstack((drotvec, dpos))
                 total_residual += np.linalg.norm(residual)  # residual의 노름을 total_residual에 더함
 
                 # Jacobian 설정: 노드 i는 -I, 노드 j는 +I
                 J_i = -np.eye(6)
                 J_j = np.eye(6)
 
-                # Weighting: Between Residual의 가중치
-                residual_weighted = residual * np.sqrt(self.weight_between)
-                J_i_weighted = J_i * np.sqrt(self.weight_between)
-                J_j_weighted = J_j * np.sqrt(self.weight_between)
+                # 회전과 위치에 대한 가중치 적용
+                W_between = np.diag(np.hstack([
+                    np.sqrt(self.weight_rot_between) * np.ones(3),
+                    np.sqrt(self.weight_trans_between) * np.ones(3)
+                ]))
+
+                residual_weighted = W_between @ residual
+                J_i_weighted = W_between @ J_i
+                J_j_weighted = W_between @ J_j
 
                 # Hessian 및 b 업데이트
-                H_i = J_i_weighted.T @ J_i_weighted
-                H_j = J_j_weighted.T @ J_j_weighted
+                H_ii = J_i_weighted.T @ J_i_weighted
+                H_jj = J_j_weighted.T @ J_j_weighted
                 H_ij = J_i_weighted.T @ J_j_weighted
 
-                H[6 * i : 6 * (i + 1), 6 * i : 6 * (i + 1)] += H_i
-                H[6 * j : 6 * (j + 1), 6 * j : 6 * (j + 1)] += H_j
+                H[6 * i : 6 * (i + 1), 6 * i : 6 * (i + 1)] += H_ii
+                H[6 * j : 6 * (j + 1), 6 * j : 6 * (j + 1)] += H_jj
                 H[6 * i : 6 * (i + 1), 6 * j : 6 * (j + 1)] += H_ij
                 H[6 * j : 6 * (j + 1), 6 * i : 6 * (i + 1)] += H_ij.T
 
@@ -218,7 +250,7 @@ class PoseGraph:
 
             # Solve H * dx = -b
             try:
-                mode = "LM" # or "GN"
+                mode = "GN" # or "GN"
                 if mode == "GN":
                     dx = np.linalg.solve(H, -b)
                 elif mode == "LM":
@@ -240,7 +272,7 @@ class PoseGraph:
             # Update poses
             for node_id in node_ids:
                 idx = node_id_to_idx[node_id]
-                tangent_vec = dx[6 * idx : 6 * (idx + 1)]
+                tangent_vec = 1 * dx[6 * idx : 6 * (idx + 1)]
                 self.nodes[node_id].pose = oplus(self.nodes[node_id].pose, tangent_vec)
 
             if iteration == max_iterations - 1:
@@ -303,7 +335,7 @@ def main():
     # PoseGraph 객체 생성
     graph = PoseGraph()
 
-    delta_yaw = np.deg2rad(20)  # 90도 회전을 라디안으로 변환
+    delta_yaw = np.deg2rad(60)  # 90도 회전을 라디안으로 변환
 
     # 1. 노드 A, B, C, D, E 추가 (네모를 형성하는 5개 노드)
     initial_pose_A = create_pose_matrix(0, 0, 0, np.array([0, 0, 0]))
@@ -322,49 +354,52 @@ def main():
     initial_pose_E = initial_pose_D @ move_once
     graph.generate_node_at_graph("E", initial_pose=initial_pose_E)
 
-    # 2. 초기 추정치에 노이즈 추가
-    # np.random.seed(42)  # 재현성을 위해 시드 고정
+    # 2. Prior Factors 추가
+    prior_A = create_pose_matrix(0, 0, 0, np.array([0, 0, 0]))
+    graph.add_prior_factor("A", prior_A)
 
+    if 0:
+        graph.add_prior_factor("B", initial_pose_B)
+        graph.add_prior_factor("C", initial_pose_C)
+        graph.add_prior_factor("D", initial_pose_D)
+        graph.add_prior_factor("E", initial_pose_E)
+
+    # 3. 초기 추정치에 노이즈 추가
     for node_id in ["B", "C", "D", "E"]:
         initial_pose = graph.get_solution(node_id).copy()
 
         # 회전 노이즈 추가 (0.1 rad)
-        noise_rot = 0.1 * np.random.randn(3)
+        # noise_rot = 0.15 * np.random.randn(3)
+        # noise_trans = 0.2 * np.random.randn(3)
+        noise_rot = 0.01 * np.random.randn(3)
+        noise_trans = 0.01 * np.random.randn(3)
+        
         initial_rotation = R.from_matrix(initial_pose[:3, :3])
         noisy_rotation = initial_rotation * R.from_rotvec(noise_rot)
         initial_pose[:3, :3] = noisy_rotation.as_matrix()
-
-        # 평행 이동 노이즈 추가 (0.05 단위)
-        noise_trans = 0.2 * np.random.randn(3)
         initial_pose[:3, 3] += noise_trans
 
         # 노드의 초기 추정치 업데이트
         graph.nodes[node_id].pose = initial_pose
 
-    # 3. Prior Factors 추가
-    prior_A = create_pose_matrix(0, 0, 0, np.array([0, 0, 0]))
-    graph.add_prior_factor("A", prior_A)
-
-    # graph.add_prior_factor("B", initial_pose_B)
-    # graph.add_prior_factor("C", initial_pose_C)
-    # graph.add_prior_factor("D", initial_pose_D)
-    # graph.add_prior_factor("E", initial_pose_E)
-
     # 4. Between Factors 추가 (각 Between Factor에 90도 회전 추가)
-    between_AB = move_once
-    graph.add_between_factor("A", "B", between_AB)
+    if 1:
+        between_AB = move_once
+        graph.add_between_factor("A", "B", between_AB)
 
-    between_BC = move_once
-    graph.add_between_factor("B", "C", between_BC)
+        between_BC = move_once
+        graph.add_between_factor("B", "C", between_BC)
 
-    between_CD = move_once
-    graph.add_between_factor("C", "D", between_CD)
+        between_CD = move_once
+        graph.add_between_factor("C", "D", between_CD)
+        # between_BD = move_once @ move_once
+        # graph.add_between_factor("B", "D", between_BD)
 
-    between_DE = move_once
-    graph.add_between_factor("D", "E", between_DE)
+        between_DE = move_once
+        graph.add_between_factor("D", "E", between_DE)
 
-    # between_AE = move_once @ move_once @ move_once @ move_once
-    # graph.add_between_factor("A", "E", between_AE)
+        # between_AE = initial_pose_E @ np.linalg.inv(initial_pose_A)
+        # graph.add_between_factor("A", "E", between_AE)
 
     # 5. 최적화 이전의 포즈 시각화
     ax_lim = 5.0
