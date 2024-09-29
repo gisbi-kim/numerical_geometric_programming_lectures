@@ -85,6 +85,12 @@ class PoseGraph:
         self.prior_factors = []  # List of PriorFactor
         self.between_factors = []  # List of BetweenFactor
 
+        self.set_weights()
+
+    def set_weights(self):
+        self.weight_prior = 0.5
+        self.weight_between = 2.5
+
     def generate_node_at_graph(self, node_id, initial_pose=None):
         """
         그래프에 노드를 추가합니다.
@@ -126,7 +132,7 @@ class PoseGraph:
             BetweenFactor(from_node_id, to_node_id, relative_pose)
         )
 
-    def solve_graph(self, max_iterations=100, tolerance=1e-6):
+    def solve_graph(self, max_iterations=3000, tolerance=1e-6):
         """
         포즈 그래프를 최적화합니다.
 
@@ -141,8 +147,8 @@ class PoseGraph:
         b = np.zeros(6 * num_nodes)
 
         for iteration in range(max_iterations):
-            H.fill(0)
-            b.fill(0)
+            H.fill(0.0)
+            b.fill(0.0)
 
             total_residual = 0.0  # total residual 초기화
 
@@ -193,10 +199,9 @@ class PoseGraph:
                 J_j = np.eye(6)
 
                 # Weighting: Between Residual의 가중치 0.5
-                weight_between = 0.5
-                residual_weighted = residual * np.sqrt(weight_between)
-                J_i_weighted = J_i * np.sqrt(weight_between)
-                J_j_weighted = J_j * np.sqrt(weight_between)
+                residual_weighted = residual * np.sqrt(self.weight_between)
+                J_i_weighted = J_i * np.sqrt(self.weight_between)
+                J_j_weighted = J_j * np.sqrt(self.weight_between)
 
                 # Hessian 및 b 업데이트
                 H_i = J_i_weighted.T @ J_i_weighted
@@ -298,54 +303,26 @@ def main():
     # PoseGraph 객체 생성
     graph = PoseGraph()
 
-    delta_yaw = np.deg2rad(-20)  # 90도 회전을 라디안으로 변환
+    delta_yaw = np.deg2rad(20)  # 90도 회전을 라디안으로 변환
 
     # 1. 노드 A, B, C, D, E 추가 (네모를 형성하는 5개 노드)
     initial_pose_A = create_pose_matrix(0, 0, 0, np.array([0, 0, 0]))
     graph.generate_node_at_graph("A", initial_pose=initial_pose_A)
 
-    initial_pose_B = create_pose_matrix(0, 0, delta_yaw, np.array([1, 0, 0]))
+    move_once = create_pose_matrix(0, 0, delta_yaw, np.array([1, 0, 0]))
+    initial_pose_B = initial_pose_A @ move_once
     graph.generate_node_at_graph("B", initial_pose=initial_pose_B)
-    print(f"initial_pose_B \n{initial_pose_B}")
 
-    initial_pose_C = create_pose_matrix(0, 0, 2 * delta_yaw, np.array([1, 1, 0]))
+    initial_pose_C = initial_pose_B @ move_once
     graph.generate_node_at_graph("C", initial_pose=initial_pose_C)
-    print(f"initial_pose_C \n{initial_pose_C}")
 
-    initial_pose_D = create_pose_matrix(0, 0, 3 * delta_yaw, np.array([0, 1, 0]))
+    initial_pose_D = initial_pose_C @ move_once
     graph.generate_node_at_graph("D", initial_pose=initial_pose_D)
-    print(f"initial_pose_D \n{initial_pose_D}")
 
-    initial_pose_E = create_pose_matrix(0, 0, 4 * delta_yaw, np.array([0, 0, 0]))
+    initial_pose_E = initial_pose_D @ move_once
     graph.generate_node_at_graph("E", initial_pose=initial_pose_E)
-    print(f"initial_pose_E \n{initial_pose_E}")
 
-    # 2. Prior Factors 추가
-    prior_A = create_pose_matrix(0, 0, 0, np.array([0, 0, 0]))
-    graph.add_prior_factor("A", prior_A)
-
-    # graph.add_prior_factor("B", initial_pose_B)
-    # graph.add_prior_factor("C", initial_pose_C)
-    # graph.add_prior_factor("D", initial_pose_D)
-    # graph.add_prior_factor("E", initial_pose_E)
-
-    # 3. Between Factors 추가 (각 Between Factor에 90도 회전 추가)
-    between_AB = create_pose_matrix(0, 0, delta_yaw, np.array([1, 0, 0]))
-    graph.add_between_factor("A", "B", between_AB)
-
-    between_BC = create_pose_matrix(0, 0, delta_yaw, np.array([1, 0, 0]))
-    graph.add_between_factor("B", "C", between_BC)
-
-    between_CD = create_pose_matrix(0, 0, delta_yaw, np.array([1, 0, 0]))
-    graph.add_between_factor("C", "D", between_CD)
-
-    between_DE = create_pose_matrix(0, 0, delta_yaw, np.array([1, 0, 0]))
-    graph.add_between_factor("D", "E", between_DE)
-
-    between_EA = create_pose_matrix(0, 0, 4*delta_yaw, np.array([4, 0, 0]))
-    graph.add_between_factor("E", "A", between_EA)
-
-    # 4. 초기 추정치에 노이즈 추가
+    # 2. 초기 추정치에 노이즈 추가
     # np.random.seed(42)  # 재현성을 위해 시드 고정
 
     for node_id in ["B", "C", "D", "E"]:
@@ -358,11 +335,36 @@ def main():
         initial_pose[:3, :3] = noisy_rotation.as_matrix()
 
         # 평행 이동 노이즈 추가 (0.05 단위)
-        noise_trans = 0.05 * np.random.randn(3)
+        noise_trans = 0.2 * np.random.randn(3)
         initial_pose[:3, 3] += noise_trans
 
         # 노드의 초기 추정치 업데이트
         graph.nodes[node_id].pose = initial_pose
+
+    # 3. Prior Factors 추가
+    prior_A = create_pose_matrix(0, 0, 0, np.array([0, 0, 0]))
+    graph.add_prior_factor("A", prior_A)
+
+    # graph.add_prior_factor("B", initial_pose_B)
+    # graph.add_prior_factor("C", initial_pose_C)
+    # graph.add_prior_factor("D", initial_pose_D)
+    # graph.add_prior_factor("E", initial_pose_E)
+
+    # 4. Between Factors 추가 (각 Between Factor에 90도 회전 추가)
+    between_AB = move_once
+    graph.add_between_factor("A", "B", between_AB)
+
+    between_BC = move_once
+    graph.add_between_factor("B", "C", between_BC)
+
+    between_CD = move_once
+    graph.add_between_factor("C", "D", between_CD)
+
+    between_DE = move_once
+    graph.add_between_factor("D", "E", between_DE)
+
+    # between_AE = move_once @ move_once @ move_once @ move_once
+    # graph.add_between_factor("A", "E", between_AE)
 
     # 5. 최적화 이전의 포즈 시각화
     ax_lim = 5.0
