@@ -123,6 +123,9 @@ def oplus(T, tangent_vec):
     Returns:
     - T_updated: Updated SE(3) or SO(3) matrix.
     """
+
+    inplace_force_SO3_property = True 
+
     if tangent_vec.shape == (6,):
         # SE(3) Update
         # Extract the rotational and translational updates
@@ -133,11 +136,12 @@ def oplus(T, tangent_vec):
         T[:3, :3] = T[:3, :3] @ exp_map(dtheta_rot)
 
         # Normalize the rotation part to ensure it's a valid SO(3) matrix
-        U, _, Vt = np.linalg.svd(T[:3, :3])
-        T[:3, :3] = U @ Vt
-        if np.linalg.det(T[:3, :3]) < 0:
-            U[:, -1] *= -1
+        if inplace_force_SO3_property:
+            U, _, Vt = np.linalg.svd(T[:3, :3])
             T[:3, :3] = U @ Vt
+            if np.linalg.det(T[:3, :3]) < 0:
+                U[:, -1] *= -1
+                T[:3, :3] = U @ Vt
 
         # Update the translation (R^3 part)
         T[:3, 3] += dtheta_trans
@@ -152,14 +156,15 @@ def oplus(T, tangent_vec):
         dtheta_rot = tangent_vec  # rotational part
 
         # Update the rotation using exponential map
-        T = exp_map(dtheta_rot) @ T
+        T = T @ exp_map(dtheta_rot)
 
         # Normalize the rotation part to ensure it's a valid SO(3) matrix
-        U, _, Vt = np.linalg.svd(T)
-        T = U @ Vt
-        if np.linalg.det(T) < 0:
-            U[:, -1] *= -1
+        if inplace_force_SO3_property:
+            U, _, Vt = np.linalg.svd(T)
             T = U @ Vt
+            if np.linalg.det(T) < 0:
+                U[:, -1] *= -1
+                T = U @ Vt
 
     else:
         raise ValueError(
