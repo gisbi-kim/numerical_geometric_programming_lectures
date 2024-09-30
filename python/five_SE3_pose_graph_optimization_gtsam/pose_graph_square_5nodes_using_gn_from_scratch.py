@@ -229,7 +229,7 @@ for i in range(1, num_nodes):
     initial_poses.append(new_pose)
 
 # Now, add edges between nodes that are k steps apart
-for dense_connection_k in [2]:
+for dense_connection_k in [ ]:
     for i in range(num_nodes - dense_connection_k):
         # Compute the measurement between node i and node i+k
         Z_ik = initial_poses[i].inverse() * initial_poses[i+dense_connection_k]
@@ -239,7 +239,8 @@ for dense_connection_k in [2]:
 
 # loop closing
 if 1:
-    edges.append({'i': 0, 'j': num_nodes-1, 'measurement': Pose()})
+    # edges.append({'i': 0, 'j': num_nodes-1, 'measurement': Pose()})
+    edges.append({'i': 0, 'j': 20, 'measurement': Pose()})
 
 # Initialize poses with noise for optimization
 poses = []
