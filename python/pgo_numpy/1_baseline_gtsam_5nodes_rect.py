@@ -133,8 +133,8 @@ def main():
     )
 
     # Define relative motion: move forward by 1 unit in x and rotate 90 degrees around the z-axis
-    delta_x = 1.0
-    delta_yaw = np.deg2rad(80)
+    delta_x = 2.0
+    delta_yaw = np.deg2rad(85)
     move_once = create_pose(0.0, 0.0, delta_yaw, delta_x, 0.0, 0.0)
 
     # Define node keys (using integer keys)
