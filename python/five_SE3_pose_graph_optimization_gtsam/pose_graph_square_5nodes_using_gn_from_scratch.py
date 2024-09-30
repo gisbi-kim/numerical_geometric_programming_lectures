@@ -214,10 +214,11 @@ odom_rot_yaw_deg = 3.5
 odom_rot_yaw_rad = np.deg2rad(odom_rot_yaw_deg)
 move_forward_size = 0.05 * odom_rot_yaw_deg
 
+move_once_pose = Pose(R.from_euler('z', odom_rot_yaw_rad).as_matrix()[:3, :3], np.array([move_forward_size, 0, 0]))
+
 edges = []
 for node_ii in range(num_nodes - 1):
-    edges.append({'i': node_ii, 'j': node_ii + 1, 
-                  'measurement': Pose(R.from_euler('z', odom_rot_yaw_rad).as_matrix()[:3, :3], np.array([move_forward_size, 0, 0]))})
+    edges.append({'i': node_ii, 'j': node_ii + 1, 'measurement': move_once_pose})
 
 # Create initial poses without noise
 initial_poses = []
@@ -239,8 +240,9 @@ for dense_connection_k in [ ]:
 
 # loop closing
 if 1:
+    edges.append({'i': num_nodes-1, 'j': num_nodes-10, 'measurement': Pose()})
     # edges.append({'i': 0, 'j': num_nodes-1, 'measurement': Pose()})
-    edges.append({'i': 0, 'j': 20, 'measurement': Pose()})
+    # edges.append({'i': 0, 'j': 20, 'measurement': Pose()})
 
 # Initialize poses with noise for optimization
 poses = []
