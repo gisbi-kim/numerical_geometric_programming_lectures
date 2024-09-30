@@ -27,8 +27,10 @@ def log_map(dR):
     k = angleaxis / (2 * np.sin(angleaxis))
     return k * (dR - dR.T)
 
+
 # def Log_map(dR):
 #     return unskew(log_map(dR))
+
 
 def Log_map(R_mat):
     """
@@ -36,6 +38,7 @@ def Log_map(R_mat):
     """
     rotation = R.from_matrix(R_mat)
     return rotation.as_rotvec()
+
 
 # tangent space to rotation matrix
 def exp_map(omega):
