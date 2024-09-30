@@ -164,8 +164,6 @@ def SE3_to_se3(T):
 
 def compute_between_error(T_i, T_j, Z_ij):
     """Compute the error for an edge."""
-    # # E = T_i.inverse() * T_j  # Estimated relative transformation
-    # # E_inv = Z_ij.inverse() * E
 
     Z_ij_est = T_i.inverse() * T_j
 
@@ -174,23 +172,7 @@ def compute_between_error(T_i, T_j, Z_ij):
     #   = (T_i.inverse() * T_j).inverse() * Z_ij
     #   = T_j.inverse() * T_i * Z_ij
     E = T_j.inverse() * T_i * Z_ij
-
     return SE3_to_se3(E)
-
-    # """Compute the error for an edge."""
-    # E = T_i.inverse() * T_j  # Estimated relative transformation
-    # E_inv = Z_ij.inverse() * E
-
-    # # Compute the rotational error using the rotation matrix logarithm
-    # R_error = E_inv.R
-    # rot_error = R.from_matrix(R_error).as_rotvec()  # Axis-angle representation
-
-    # # Compute the translational error directly
-    # t_error = E_inv.t
-
-    # # Combine into a single error vector
-    # e = np.hstack((rot_error, t_error))
-    return e
 
 
 def build_linear_system(poses, edges, priors=[], weight_prior=1e6):
@@ -205,8 +187,6 @@ def build_linear_system(poses, edges, priors=[], weight_prior=1e6):
         e_ij = compute_between_error(T_i, T_j, Z_ij)
 
         # Jacobians w.r.t T_i and T_j (approximate as identity for simplicity)
-        # J_i = -np.eye(6)
-        # J_j = np.eye(6)
         J_i = np.eye(6)
         J_j = -np.eye(6)
 
