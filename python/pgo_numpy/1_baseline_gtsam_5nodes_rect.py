@@ -17,7 +17,7 @@ from math import radians
 
 def create_pose(roll, pitch, yaw, x, y, z):
     """
-    롤, 피치, 요 (라디안 단위) 및 위치 좌표로부터 Pose3 객체를 생성합니다.
+    Create a Pose3 object from roll, pitch, yaw (in radians) and position coordinates.
     """
     rotation = Rot3.RzRyRx(roll, pitch, yaw)
     translation = Point3(x, y, z)
@@ -26,18 +26,17 @@ def create_pose(roll, pitch, yaw, x, y, z):
 
 def add_noise_to_pose(pose, rot_noise_std=0.01, trans_noise_std=0.01):
     """
-    Pose3 객체에 Gaussian 노이즈를 추가합니다.
+    Add Gaussian noise to a Pose3 object.
     """
-    # 회전에 노이즈 추가
-    noise_rot = rot_noise_std * np.random.randn(3)  # 회전 벡터 노이즈
-    # Rot3.Rx, Rot3.Ry, Rot3.Rz 사용
+    # Add noise to the rotation
+    noise_rot = rot_noise_std * np.random.randn(3)  # Rotation vector noise
     noisy_rot = pose.rotation().compose(
         Rot3.Rx(noise_rot[0])
         .compose(Rot3.Ry(noise_rot[1]))
         .compose(Rot3.Rz(noise_rot[2]))
     )
 
-    # 위치에 노이즈 추가
+    # Add noise to the translation
     noise_trans = trans_noise_std * np.random.randn(3)
     noisy_trans = Point3(
         pose.x() + noise_trans[0], pose.y() + noise_trans[1], pose.z() + noise_trans[2]
@@ -48,7 +47,7 @@ def add_noise_to_pose(pose, rot_noise_std=0.01, trans_noise_std=0.01):
 
 def plot_poses(pose_list, ax, color="b", label_prefix="Pose"):
     """
-    Pose3 객체 리스트를 3D 플롯에 시각화합니다.
+    Visualize a list of Pose3 objects on a 3D plot.
     """
     for idx, pose in enumerate(pose_list):
         origin = np.array([pose.x(), pose.y(), pose.z()])
@@ -75,19 +74,54 @@ def plot_poses(pose_list, ax, color="b", label_prefix="Pose"):
             label=f"{label_prefix} {chr(ord('A') + idx)}",
         )
 
-    # 레전드 중복 제거
+    # Remove duplicate legends
     handles, labels = ax.get_legend_handles_labels()
     unique = dict(zip(labels, handles))
     ax.legend(unique.values(), unique.keys())
 
 
+def plot_before_optimization(initial_estimates, ax_lim=3.0):
+    """
+    Plot poses before optimization.
+    """
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+    plot_poses(initial_estimates, ax, color="b", label_prefix="Initial Pose")
+    ax.set_box_aspect([1, 1, 1])
+    ax.set_xlim([-ax_lim, ax_lim])
+    ax.set_ylim([-ax_lim, ax_lim])
+    ax.set_zlim([-ax_lim, ax_lim])
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
+    ax.set_title("Before Optimization")
+    plt.show()
+
+
+def plot_after_optimization(optimized_poses, ax_lim=3.0):
+    """
+    Plot poses after optimization.
+    """
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+    plot_poses(optimized_poses, ax, color="g", label_prefix="Optimized Pose")
+    ax.set_box_aspect([1, 1, 1])
+    ax.set_xlim([-ax_lim, ax_lim])
+    ax.set_ylim([-ax_lim, ax_lim])
+    ax.set_zlim([-ax_lim, ax_lim])
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
+    ax.set_title("After Optimization")
+    plt.show()
+
+
 def main():
-    # 팩터 그래프와 초기 추정치 초기화
+    # Initialize factor graph and initial estimates
     graph = NonlinearFactorGraph()
     initial = Values()
 
-    # 노이즈 모델 정의
-    # 매우 작은 노이즈 값은 수치적으로 불안정할 수 있으므로 약간 큰 값으로 설정
+    # Define noise models
     prior_noise = noiseModel.Diagonal.Sigmas(
         np.array([1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3])
     )
@@ -98,91 +132,55 @@ def main():
         np.array([0.01, 0.01, 0.01, 0.01, 0.01, 0.01])
     )
 
-    # 상대 이동 정의: x 방향으로 1 단위 전진 및 z축을 기준으로 90도 회전
+    # Define relative motion: move forward by 1 unit in x and rotate 90 degrees around the z-axis
     delta_x = 1.0
-    delta_yaw = np.deg2rad(80) 
-
+    delta_yaw = np.deg2rad(80)
     move_once = create_pose(0.0, 0.0, delta_yaw, delta_x, 0.0, 0.0)
 
-    # 노드 키 정의 (정수 키 사용)
-    A = 0
-    B = 1
-    C = 2
-    D = 3
-    E = 4
+    # Define node keys (using integer keys)
+    A, B, C, D, E = range(5)
 
-    num_nodes = 5
-
-    # 포즈 A부터 E까지 생성
-    poses = []
-    poses.append(Pose3())
-    for i in range(1, num_nodes):
-        prev_pose = poses[i-1]
+    # Create poses from A to E
+    poses = [Pose3()]
+    for i in range(1, 5):
+        prev_pose = poses[i - 1]
         poses.append(prev_pose.compose(move_once))
 
-    # 노드 A에 Prior Factor 추가
+    # Add a prior factor at node A
     graph.add(PriorFactorPose3(A, poses[0], prior_noise))
 
-    # Between Factor 추가 (A-B, B-C, C-D, D-E)
-    move_once = create_pose(0, 0, delta_yaw, delta_x, 0, 0)
-    for i in range(num_nodes - 1):
-        from_key = i
-        to_key = i + 1
-        relative_pose = move_once
-        graph.add(BetweenFactorPose3(from_key, to_key, relative_pose, odometry_noise))
+    # Add between factors (A-B, B-C, C-D, D-E)
+    for i in range(4):
+        graph.add(BetweenFactorPose3(i, i + 1, move_once, odometry_noise))
 
-    # loop Factor 추가 (A-E)
-    same_place_revisit_measurement = Pose3()
-    graph.add(BetweenFactorPose3(A, E, same_place_revisit_measurement, loop_noise))
+    # Add loop closure factor (A-E)
+    graph.add(BetweenFactorPose3(A, E, Pose3(), loop_noise))
 
-    # 초기 추정치에 노이즈 추가 및 삽입
+    # Add noisy initial estimates
     initial_estimates = []
     for i, key in enumerate([A, B, C, D, E]):
         noisy_pose = add_noise_to_pose(poses[i])
         initial.insert(key, noisy_pose)
         initial_estimates.append(noisy_pose)
 
-    # 최적화 전 포즈 시각화
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    plot_poses(initial_estimates, ax, color="b", label_prefix="Initial Pose")
-    ax.set_box_aspect([1, 1, 1])
-    ax.set_xlim([-5, 5])
-    ax.set_ylim([-5, 5])
-    ax.set_zlim([-5, 5])
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
-    ax.set_zlabel("Z")
-    ax.set_title("Before Optimization")
-    plt.show()
+    # Plot before optimization
+    plot_before_optimization(initial_estimates)
 
-    # 그래프 최적화 수행
+    # Perform graph optimization
     params = gtsam.LevenbergMarquardtParams()
     params.setVerbosityLM("SUMMARY")
     optimizer = gtsam.LevenbergMarquardtOptimizer(graph, initial, params)
     result = optimizer.optimize()
 
-    # 최적화된 포즈 추출
+    # Extract optimized poses
     optimized_poses = []
     for key in [A, B, C, D, E]:
-        pose = result.atPose3(key)
-        optimized_poses.append(pose)
+        optimized_poses.append(result.atPose3(key))
 
-    # 최적화 후 포즈 시각화
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    plot_poses(optimized_poses, ax, color="g", label_prefix="Optimized Pose")
-    ax.set_box_aspect([1, 1, 1])
-    ax.set_xlim([-5, 5])
-    ax.set_ylim([-5, 5])
-    ax.set_zlim([-5, 5])
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
-    ax.set_zlabel("Z")
-    ax.set_title("After Optimization")
-    plt.show()
+    # Plot after optimization
+    plot_after_optimization(optimized_poses)
 
-    # 최적화된 포즈 출력
+    # Print optimized poses
     print("\nOptimized Poses:")
     for i, key in enumerate([A, B, C, D, E]):
         pose = result.atPose3(key)

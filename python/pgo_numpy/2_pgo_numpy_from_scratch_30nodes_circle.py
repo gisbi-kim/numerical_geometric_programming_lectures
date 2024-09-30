@@ -24,15 +24,20 @@ def plot_poses(pose_list, ax, color="b", label_prefix="Pose"):
                 length=0.3,
                 normalize=True,
             )
+
         # Add label only to the first node to avoid duplication
-        ax.scatter(
-            origin[0],
-            origin[1],
-            origin[2],
-            s=50,
-            label=f"{label_prefix} {chr(ord('A') + idx)}",
-            # color=color,
-        )
+        if idx == 0:
+            ax.scatter(
+                origin[0],
+                origin[1],
+                origin[2],
+                s=50,
+                label=f"{label_prefix}",
+                color=color,
+            )
+        else:
+            ax.scatter(origin[0], origin[1], origin[2], s=50, color=color)
+
 
     # Remove duplicate legends
     handles, labels = ax.get_legend_handles_labels()
@@ -241,12 +246,12 @@ def pose_graph_optimization(poses, edges, iterations=30):
 # Example usage:
 # Initialize poses and edges
 
-num_nodes = 5
+num_nodes = 30
 
-odom_rot_yaw_deg = 320.0 / (num_nodes - 1)
+odom_rot_yaw_deg = 330.0 / (num_nodes - 1)
 odom_rot_yaw_rad = np.deg2rad(odom_rot_yaw_deg)
 
-r = 2.0  # 예: 반지름 1.0
+r = 3.0  # 예: 반지름 1.0
 move_forward_size = 2 * r * np.sin(np.deg2rad(180.0 / num_nodes))
 
 move_once_pose = Pose(
@@ -278,24 +283,23 @@ for i in range(1, num_nodes):
     initial_poses.append(new_pose)
 
 # loop closing
-if 1:
-    edges.append(
-        {
-            "i": 0,
-            "j": num_nodes - 1,
-            "measurement": Pose(
-                R.from_euler("z", np.deg2rad(0)).as_matrix()[:3, :3],
-                np.array([0, 0, 0]),
-            ),
-            "weight": between_loop_weight,
-        }
-    )
+edges.append(
+    {
+        "i": 0,
+        "j": num_nodes - 1,
+        "measurement": Pose(
+            R.from_euler("z", np.deg2rad(0)).as_matrix()[:3, :3],
+            np.array([0, 0, 0]),
+        ),
+        "weight": between_loop_weight,
+    }
+)
 
 # Run optimization
 optimized_poses = pose_graph_optimization(initial_poses.copy(), edges)
 
 #################################################
-max_ax_lim = 4
+max_ax_lim = 8
 # Plot initial poses
 fig = plt.figure()
 ax = fig.add_subplot(111, projection="3d")
