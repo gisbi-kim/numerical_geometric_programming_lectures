@@ -3,6 +3,23 @@ from scipy.spatial.transform import Rotation as R
 import matplotlib.pyplot as plt
 import copy 
 
+def print_optimized_delta_translation(pose_list):
+    for idx, pose in enumerate(pose_list):
+        if idx == len(pose_list)- 1:
+            return 
+        
+        pose_i = pose_list[idx]
+        pose_j = pose_list[idx + 1]
+        optimized_odom = pose_i.inverse() * pose_j        
+
+        # Rotation 객체로 변환
+        rot = R.from_matrix(optimized_odom.R)
+        roll, pitch, yaw = rot.as_euler('xyz', degrees=True)
+
+        print(f"rel btn {idx} and {idx+1} [translation] is {optimized_odom.t[0]:.4f}, {optimized_odom.t[1]:.4f}, {optimized_odom.t[2]:.4f}")
+        print(f"rel btn {idx} and {idx+1} [roll, pitch, yaw] is {roll:.4f}, {pitch:.4f}, {yaw:.4f}")
+
+
 def plot_poses(pose_list, ax, color='b', label_prefix='Pose'):
     """
     Visualize a list of Pose objects in a 3D plot.
@@ -193,7 +210,7 @@ def pose_graph_optimization(poses, edges, iterations=30):
 # Initialize poses and edges
 
 num_nodes = 100
-odom_rot_yaw_deg = 4.0
+odom_rot_yaw_deg = 3.5
 odom_rot_yaw_rad = np.deg2rad(odom_rot_yaw_deg)
 move_forward_size = 0.05 * odom_rot_yaw_deg
 
@@ -221,7 +238,7 @@ for dense_connection_k in [2]:
         edges.append({'i': i, 'j': i+dense_connection_k, 'measurement': Z_ik})
 
 # loop closing
-if 0:
+if 1:
     edges.append({'i': 0, 'j': num_nodes-1, 'measurement': Pose()})
 
 # Initialize poses with noise for optimization
@@ -238,7 +255,7 @@ for i in range(1, num_nodes):
     # pose.t[1] += 0.1*i # mimic incremental z drift
     pose.t[2] += 0.03*i # mimic incremental z drift
 
-    apply_rot_initial_noise = True   
+    apply_rot_initial_noise = False   
     if apply_rot_initial_noise:
         # try 0: this fails numerically ... 
         noise_rotvec = 0.02 * np.random.randn(3)    
@@ -256,6 +273,9 @@ for i in range(1, num_nodes):
 
 # Run optimization
 optimized_poses = pose_graph_optimization(poses.copy(), edges)
+
+print_optimized_delta_translation(optimized_poses)
+print(f"\n when move_forward_size {move_forward_size}")
 
 #################################################
 max_ax_lim = 10
