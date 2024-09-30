@@ -157,7 +157,7 @@ def build_linear_system(poses, edges, priors=[], weight_prior=1e6):
         idx_j = np.arange(6*j, 6*j+6)
 
         # Accumulate H and b using np.ix_ with arrays
-        weight = edge.get('weight', 100.0)  # 가중치를 가져오고, 없으면 1로 기본 설정
+        weight = edge.get('weight', 1.0)  # 가중치를 가져오고, 없으면 1로 기본 설정
         H[np.ix_(idx_i, idx_i)] += weight * (J_i.T @ J_i)
         H[np.ix_(idx_i, idx_j)] += weight * (J_i.T @ J_j)
         H[np.ix_(idx_j, idx_i)] += weight * (J_j.T @ J_i)
@@ -210,9 +210,12 @@ def pose_graph_optimization(poses, edges, iterations=30):
 # Initialize poses and edges
 
 num_nodes = 100
-odom_rot_yaw_deg = 3.5
+
+odom_rot_yaw_deg = 360.0 / num_nodes
 odom_rot_yaw_rad = np.deg2rad(odom_rot_yaw_deg)
-move_forward_size = 0.05 * odom_rot_yaw_deg
+
+r = 3.0  # 예: 반지름 1.0
+move_forward_size = 2 * r * np.sin(np.deg2rad(180.0 / num_nodes)) 
 
 move_once_pose = Pose(R.from_euler('z', odom_rot_yaw_rad).as_matrix()[:3, :3], np.array([move_forward_size, 0, 0]))
 
@@ -230,7 +233,7 @@ for i in range(1, num_nodes):
     initial_poses.append(new_pose)
 
 # Now, add edges between nodes that are k steps apart
-for dense_connection_k in [ ]:
+for dense_connection_k in [ 3, 5, 7 ]:
     for i in range(num_nodes - dense_connection_k):
         # Compute the measurement between node i and node i+k
         Z_ik = initial_poses[i].inverse() * initial_poses[i+dense_connection_k]
@@ -240,8 +243,8 @@ for dense_connection_k in [ ]:
 
 # loop closing
 if 1:
-    edges.append({'i': num_nodes-1, 'j': num_nodes-10, 'measurement': Pose()})
-    # edges.append({'i': 0, 'j': num_nodes-1, 'measurement': Pose()})
+    # edges.append({'i': num_nodes-1, 'j': num_nodes-10, 'measurement': Pose(), 'weight': 1000000})
+    edges.append({'i': 0, 'j': num_nodes-1, 'measurement': Pose(), 'weight': 0.0001})
     # edges.append({'i': 0, 'j': 20, 'measurement': Pose()})
 
 # Initialize poses with noise for optimization
@@ -258,7 +261,7 @@ for i in range(1, num_nodes):
     # pose.t[1] += 0.1*i # mimic incremental z drift
     pose.t[2] += 0.03*i # mimic incremental z drift
 
-    apply_rot_initial_noise = False   
+    apply_rot_initial_noise = True   
     if apply_rot_initial_noise:
         # try 0: this fails numerically ... 
         noise_rotvec = 0.02 * np.random.randn(3)    
