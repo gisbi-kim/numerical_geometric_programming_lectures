@@ -24,7 +24,7 @@ def create_pose(roll, pitch, yaw, x, y, z):
     return Pose3(rotation, translation)
 
 
-def add_noise_to_pose(pose, rot_noise_std=0.01, trans_noise_std=0.2):
+def add_noise_to_pose(pose, rot_noise_std=0.01, trans_noise_std=0.01):
     """
     Pose3 객체에 Gaussian 노이즈를 추가합니다.
     """
@@ -66,17 +66,15 @@ def plot_poses(pose_list, ax, color="b", label_prefix="Pose"):
                 length=0.3,
                 normalize=True,
             )
-        # 첫 번째 노드에만 레이블 추가하여 중복 방지
-        if idx == 0:
-            ax.scatter(
-                origin[0],
-                origin[1],
-                origin[2],
-                s=50,
-                label=f"{label_prefix} {chr(ord('A') + idx)}",
-            )
-        else:
-            ax.scatter(origin[0], origin[1], origin[2], s=50)
+
+        ax.scatter(
+            origin[0],
+            origin[1],
+            origin[2],
+            s=50,
+            label=f"{label_prefix} {chr(ord('A') + idx)}",
+        )
+
     # 레전드 중복 제거
     handles, labels = ax.get_legend_handles_labels()
     unique = dict(zip(labels, handles))
@@ -96,10 +94,15 @@ def main():
     odometry_noise = noiseModel.Diagonal.Sigmas(
         np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
     )
+    loop_noise = noiseModel.Diagonal.Sigmas(
+        np.array([0.01, 0.01, 0.01, 0.01, 0.01, 0.01])
+    )
 
     # 상대 이동 정의: x 방향으로 1 단위 전진 및 z축을 기준으로 90도 회전
     delta_x = 1.0
-    delta_yaw = np.deg2rad(60)  # 90도를 라디안으로 변환
+    delta_yaw = np.deg2rad(80) 
+
+    move_once = create_pose(0.0, 0.0, delta_yaw, delta_x, 0.0, 0.0)
 
     # 노드 키 정의 (정수 키 사용)
     A = 0
@@ -108,29 +111,29 @@ def main():
     D = 3
     E = 4
 
+    num_nodes = 5
+
     # 포즈 A부터 E까지 생성
     poses = []
-    for i in range(5):
-        roll = 0
-        pitch = 0
-        yaw = delta_yaw * i
-        x = delta_x * i
-        y = 0
-        z = 0
-        pose = create_pose(roll, pitch, yaw, x, y, z)
-        poses.append(pose)
+    poses.append(Pose3())
+    for i in range(1, num_nodes):
+        prev_pose = poses[i-1]
+        poses.append(prev_pose.compose(move_once))
 
     # 노드 A에 Prior Factor 추가
     graph.add(PriorFactorPose3(A, poses[0], prior_noise))
 
     # Between Factor 추가 (A-B, B-C, C-D, D-E)
     move_once = create_pose(0, 0, delta_yaw, delta_x, 0, 0)
-    for i in range(4):
+    for i in range(num_nodes - 1):
         from_key = i
         to_key = i + 1
         relative_pose = move_once
-        print(f"relative_pose \n{relative_pose}")
         graph.add(BetweenFactorPose3(from_key, to_key, relative_pose, odometry_noise))
+
+    # loop Factor 추가 (A-E)
+    same_place_revisit_measurement = Pose3()
+    graph.add(BetweenFactorPose3(A, E, same_place_revisit_measurement, loop_noise))
 
     # 초기 추정치에 노이즈 추가 및 삽입
     initial_estimates = []

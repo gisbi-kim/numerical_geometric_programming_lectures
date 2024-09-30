@@ -4,26 +4,6 @@ import matplotlib.pyplot as plt
 import copy
 
 
-def print_optimized_delta_translation(pose_list):
-    for idx, pose in enumerate(pose_list):
-        if idx == len(pose_list) - 1:
-            return
-
-        pose_i = pose_list[idx]
-        pose_j = pose_list[idx + 1]
-        optimized_odom = pose_i.inverse() * pose_j
-
-        # Rotation 객체로 변환
-        rot = R.from_matrix(optimized_odom.R)
-        roll, pitch, yaw = rot.as_euler("xyz", degrees=True)
-
-        print(
-            f"rel btn {idx} and {idx+1} [translation] is {optimized_odom.t[0]:.4f}, {optimized_odom.t[1]:.4f}, {optimized_odom.t[2]:.4f}"
-        )
-        print(
-            f"rel btn {idx} and {idx+1} [roll, pitch, yaw] is {roll:.4f}, {pitch:.4f}, {yaw:.4f}"
-        )
-
 
 def plot_poses(pose_list, ax, color="b", label_prefix="Pose"):
     """
@@ -46,17 +26,15 @@ def plot_poses(pose_list, ax, color="b", label_prefix="Pose"):
                 normalize=True,
             )
         # Add label only to the first node to avoid duplication
-        if idx == 0:
-            ax.scatter(
-                origin[0],
-                origin[1],
-                origin[2],
-                s=50,
-                label=f"{label_prefix} {chr(ord('A') + idx)}",
-                color=color,
-            )
-        else:
-            ax.scatter(origin[0], origin[1], origin[2], s=50, color=color)
+        ax.scatter(
+            origin[0],
+            origin[1],
+            origin[2],
+            s=50,
+            label=f"{label_prefix} {chr(ord('A') + idx)}",
+            # color=color,
+        )
+
     # Remove duplicate legends
     handles, labels = ax.get_legend_handles_labels()
     unique = dict(zip(labels, handles))
@@ -163,14 +141,15 @@ def SE3_to_se3(T):
 
 
 def compute_between_error(T_i, T_j, Z_ij):
-    """Compute the error for an edge."""
-
-    Z_ij_est = T_i.inverse() * T_j
-
-    # reason: Z_ij_est.oplus(e) = Z_ij
-    # E = Z_ij_est.inverse() * Z_ij
-    #   = (T_i.inverse() * T_j).inverse() * Z_ij
-    #   = T_j.inverse() * T_i * Z_ij
+    """
+     The observation model is
+        Z_ij_est.oplus(e) = Z_ij
+        , where Z_ij_est = T_i.inverse() * T_j
+     Thus, 
+        E = Z_ij_est.inverse() * Z_ij
+          = (T_i.inverse() * T_j).inverse() * Z_ij
+          = T_j.inverse() * T_i * Z_ij
+    """
     E = T_j.inverse() * T_i * Z_ij
     return SE3_to_se3(E)
 
@@ -197,8 +176,8 @@ def build_linear_system(poses, edges, priors=[], weight_prior=1e6):
         # Accumulate H and b using np.ix_ with arrays
         weight = edge.get("weight", 1.0)  # 가중치를 가져오고, 없으면 1로 기본 설정
 
-        rot_weight = 0.1 * weight
-        trans_weight = 0.5 * weight
+        rot_weight = 1.0 * weight
+        trans_weight = 1.0 * weight
 
         # 회전 부분 (앞 3개) 가중치 적용 (3x3 크기 맞추기)
         H[np.ix_(idx_i[:3], idx_i[:3])] += rot_weight * (J_i[:3, :3].T @ J_i[:3, :3])
@@ -215,9 +194,6 @@ def build_linear_system(poses, edges, priors=[], weight_prior=1e6):
         H[np.ix_(idx_j[3:], idx_j[3:])] += trans_weight * (J_j[3:, 3:].T @ J_j[3:, 3:])
         b[idx_i[3:]] += trans_weight * (J_i[3:, 3:].T @ e_ij[3:])
         b[idx_j[3:]] += trans_weight * (J_j[3:, 3:].T @ e_ij[3:])
-
-        if 1 < abs(i - j):
-            print(f"add loop closing factor btn {i} and {j}!")
 
         # 원소가 있는 부분을 1, 없는 부분을 0으로 변환
         draw_jacobian_mat = 0
@@ -271,12 +247,12 @@ def pose_graph_optimization(poses, edges, iterations=30):
 # Example usage:
 # Initialize poses and edges
 
-num_nodes = 50
+num_nodes = 5
 
-odom_rot_yaw_deg = 330.0 / num_nodes
+odom_rot_yaw_deg = 320.0 / (num_nodes - 1)
 odom_rot_yaw_rad = np.deg2rad(odom_rot_yaw_deg)
 
-r = 3.0  # 예: 반지름 1.0
+r = 2.0  # 예: 반지름 1.0
 move_forward_size = 2 * r * np.sin(np.deg2rad(180.0 / num_nodes))
 
 move_once_pose = Pose(
@@ -285,7 +261,7 @@ move_once_pose = Pose(
 )
 
 between_odom_weight = 1.0
-between_loop_weight = 1.0
+between_loop_weight = 100.0
 
 edges = []
 for node_ii in range(num_nodes - 1):
@@ -308,15 +284,6 @@ for i in range(1, num_nodes):
     print(f"new_pose \n{new_pose.as_matrix()}")
     initial_poses.append(new_pose)
 
-# Now, add edges between nodes that are k steps apart
-for dense_connection_k in []:
-    for i in range(num_nodes - dense_connection_k):
-        # Compute the measurement between node i and node i+k
-        Z_ik = initial_poses[i].inverse() * initial_poses[i + dense_connection_k]
-        # Optionally, add noise to Z_ik
-        # Z_ik = Z_ik.noised()
-        edges.append({"i": i, "j": i + dense_connection_k, "measurement": Z_ik})
-
 # loop closing
 if 1:
     edges.append(
@@ -334,11 +301,8 @@ if 1:
 # Run optimization
 optimized_poses = pose_graph_optimization(initial_poses.copy(), edges)
 
-print_optimized_delta_translation(optimized_poses)
-print(f"\n when move_forward_size {move_forward_size}")
-
 #################################################
-max_ax_lim = 10
+max_ax_lim = 4
 # Plot initial poses
 fig = plt.figure()
 ax = fig.add_subplot(111, projection="3d")
